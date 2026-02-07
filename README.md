@@ -37,6 +37,9 @@ AutoStoryTube/
 │   ├── credentials/
 │   │   └── client_secret.json   # you add this
 │   ├── outputs/
+│   ├── scripts/
+│   ├── video_library/
+│   │   ├── catalog.json
 │   └── uploads/
 ├── requirements.txt
 ├── run.sh
@@ -53,6 +56,25 @@ AutoStoryTube/
 3. It generates **animated ASS subtitles** and overlays them with FFmpeg.
 4. It exports a final MP4 and lets you download it.
 5. You can upload directly to YouTube after authenticating.
+
+### Video library + Excel mapping (optional)
+
+You can keep reusable background videos in `data/video_library` and list them
+in `data/video_library/catalog.json`. The UI will show the list and let you
+select a video by code instead of uploading every time.
+
+If you want to map scripts by code in bulk, upload an Excel file with these
+columns:
+
+- `video_code` (matches the catalog code)
+- `script_text` (the script content for that code)
+
+When you choose a library code and upload the Excel, the app will use the
+matching `script_text` for that code.
+
+If you prefer to keep scripts in files, add a `script_file` column with the
+filename of a `.txt` file stored in `data/scripts`. The app will load that file
+for the matching `video_code`.
 
 ---
 

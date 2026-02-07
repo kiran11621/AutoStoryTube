@@ -13,6 +13,7 @@ from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from openpyxl import load_workbook
 from google.auth.transport.requests import Request as GoogleRequest
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
@@ -24,12 +25,17 @@ DATA_DIR = BASE_DIR / "data"
 UPLOAD_DIR = DATA_DIR / "uploads"
 OUTPUT_DIR = DATA_DIR / "outputs"
 CREDENTIALS_DIR = DATA_DIR / "credentials"
+VIDEO_LIBRARY_DIR = DATA_DIR / "video_library"
+VIDEO_LIBRARY_CATALOG = VIDEO_LIBRARY_DIR / "catalog.json"
+SCRIPTS_DIR = DATA_DIR / "scripts"
 TOKEN_PATH = CREDENTIALS_DIR / "token.json"
 CLIENT_SECRET_PATH = CREDENTIALS_DIR / "client_secret.json"
 
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 CREDENTIALS_DIR.mkdir(parents=True, exist_ok=True)
+VIDEO_LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
+SCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
 
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
 
@@ -42,6 +48,11 @@ templates = Jinja2Templates(directory=BASE_DIR / "app" / "templates")
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request) -> HTMLResponse:
     return templates.TemplateResponse("index.html", {"request": request})
+
+
+@app.get("/api/library")
+def library_catalog() -> JSONResponse:
+    return JSONResponse({"videos": _load_video_catalog()})
 
 
 def _run_ffmpeg(command: list[str]) -> None:
@@ -70,6 +81,55 @@ def _ffmpeg_subtitles_path(path: Path) -> str:
     except ValueError:
         relative = path.resolve()
     return _ffmpeg_filter_path(relative)
+
+
+def _load_video_catalog() -> list[dict[str, str]]:
+    if not VIDEO_LIBRARY_CATALOG.exists():
+        return []
+    try:
+        entries = json.loads(VIDEO_LIBRARY_CATALOG.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return []
+    return [entry for entry in entries if isinstance(entry, dict)]
+
+
+def _library_video_path(code: str) -> Path | None:
+    for entry in _load_video_catalog():
+        if entry.get("code") == code:
+            filename = entry.get("filename")
+            if filename:
+                candidate = VIDEO_LIBRARY_DIR / filename
+                return candidate if candidate.exists() else None
+    return None
+
+
+def _load_script_from_excel(excel_path: Path, video_code: str) -> str | None:
+    workbook = load_workbook(filename=excel_path, read_only=True, data_only=True)
+    sheet = workbook.active
+    headers = [str(cell.value).strip() if cell.value is not None else "" for cell in sheet[1]]
+    try:
+        code_index = headers.index("video_code")
+    except ValueError:
+        code_index = -1
+    text_index = headers.index("script_text") if "script_text" in headers else -1
+    file_index = headers.index("script_file") if "script_file" in headers else -1
+    if code_index == -1:
+        return None
+
+    for row in sheet.iter_rows(min_row=2, values_only=True):
+        if not row:
+            continue
+        current_code = str(row[code_index]).strip() if row[code_index] is not None else ""
+        if current_code != video_code:
+            continue
+        if text_index != -1 and row[text_index]:
+            return str(row[text_index]).strip()
+        if file_index != -1 and row[file_index]:
+            script_name = _safe_filename(str(row[file_index]).strip())
+            script_path = SCRIPTS_DIR / script_name
+            if script_path.exists():
+                return script_path.read_text(encoding="utf-8")
+    return None
 
 
 def _wav_duration_seconds(wav_path: Path) -> float:
@@ -133,20 +193,41 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
 @app.post("/api/process")
 def process_video(
-    background_video: UploadFile = File(...),
-    script_file: UploadFile = File(...),
+    background_video: UploadFile | None = File(None),
+    script_file: UploadFile | None = File(None),
+    library_code: str = Form(""),
+    script_excel: UploadFile | None = File(None),
     tts_rate: int = Form(175),
 ) -> JSONResponse:
     job_id = uuid.uuid4().hex
-    video_path = UPLOAD_DIR / f"{job_id}_{_safe_filename(background_video.filename)}"
-    script_path = UPLOAD_DIR / f"{job_id}_{_safe_filename(script_file.filename)}"
+    video_path: Path | None = None
+    if library_code:
+        video_path = _library_video_path(library_code)
+        if video_path is None:
+            return JSONResponse({"error": "Library video code not found."}, status_code=400)
+    elif background_video is not None:
+        video_path = UPLOAD_DIR / f"{job_id}_{_safe_filename(background_video.filename)}"
+        with video_path.open("wb") as video_buffer:
+            shutil.copyfileobj(background_video.file, video_buffer)
+    else:
+        return JSONResponse({"error": "Provide a background video or select a library code."}, status_code=400)
 
-    with video_path.open("wb") as video_buffer:
-        shutil.copyfileobj(background_video.file, video_buffer)
-    with script_path.open("wb") as script_buffer:
-        shutil.copyfileobj(script_file.file, script_buffer)
+    text = None
+    if script_excel is not None and library_code:
+        excel_path = UPLOAD_DIR / f"{job_id}_{_safe_filename(script_excel.filename)}"
+        with excel_path.open("wb") as excel_buffer:
+            shutil.copyfileobj(script_excel.file, excel_buffer)
+        text = _load_script_from_excel(excel_path, library_code)
+        if text is None:
+            return JSONResponse({"error": "No script found in Excel for this video code."}, status_code=400)
 
-    text = script_path.read_text(encoding="utf-8")
+    if text is None:
+        if script_file is None:
+            return JSONResponse({"error": "Provide a script text file or Excel mapping."}, status_code=400)
+        script_path = UPLOAD_DIR / f"{job_id}_{_safe_filename(script_file.filename)}"
+        with script_path.open("wb") as script_buffer:
+            shutil.copyfileobj(script_file.file, script_buffer)
+        text = script_path.read_text(encoding="utf-8")
     voice_path = OUTPUT_DIR / f"{job_id}_voice.wav"
     _text_to_speech(text, voice_path, tts_rate)
 

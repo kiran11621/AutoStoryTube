@@ -81,3 +81,17 @@ pre {
 .actions {
   margin-bottom: 16px;
 }
+
+.library-list {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0 0;
+}
+
+.library-list li {
+  padding: 8px 12px;
+  background: #0f172a;
+  border-radius: 10px;
+  border: 1px solid #334155;
+  margin-bottom: 8px;
+}

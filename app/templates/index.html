@@ -17,12 +17,22 @@
       <h2>1. Generate Video</h2>
       <form id="processForm">
         <label>
+          Pick from video library
+          <select name="library_code" id="librarySelect">
+            <option value="">-- Upload your own video --</option>
+          </select>
+        </label>
+        <label>
           Background video (MP4)
-          <input type="file" name="background_video" accept="video/mp4" required />
+          <input type="file" name="background_video" accept="video/mp4" />
         </label>
         <label>
           Story script (.txt)
-          <input type="file" name="script_file" accept="text/plain" required />
+          <input type="file" name="script_file" accept="text/plain" />
+        </label>
+        <label>
+          Optional Excel mapping (columns: video_code, script_text or script_file)
+          <input type="file" name="script_excel" accept=".xlsx" />
         </label>
         <label>
           TTS rate
@@ -31,6 +41,12 @@
         <button type="submit">Render Video</button>
       </form>
       <div id="processResult" class="result"></div>
+    </section>
+
+    <section class="card">
+      <h2>Video Library</h2>
+      <p>Drop MP4 files into <code>data/video_library</code> and update <code>catalog.json</code>.</p>
+      <ul id="libraryList" class="library-list"></ul>
     </section>
 
     <section class="card">
