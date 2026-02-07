@@ -54,16 +54,6 @@ def _safe_filename(name: str) -> str:
     return re.sub(r"[^a-zA-Z0-9._-]", "_", name)
 
 
-def _ffmpeg_filter_path(path: Path) -> str:
-    normalized = path.resolve().as_posix()
-    return (
-        normalized.replace("\\", "/")
-        .replace(":", "\\:")
-        .replace("'", "\\'")
-        .replace(" ", "\\ ")
-    )
-
-
 def _wav_duration_seconds(wav_path: Path) -> float:
     with wave.open(str(wav_path), "rb") as wav_file:
         frames = wav_file.getnframes()
@@ -148,9 +138,6 @@ def process_video(
 
     output_path = OUTPUT_DIR / f"{job_id}_final.mp4"
 
-    subtitles_filter = (
-        f"subtitles=filename='{_ffmpeg_filter_path(subtitles_path)}':charenc=UTF-8"
-    )
     ffmpeg_command = [
         "ffmpeg",
         "-y",
@@ -159,7 +146,7 @@ def process_video(
         "-i",
         str(voice_path),
         "-vf",
-        subtitles_filter,
+        f"ass={subtitles_path}",
         "-c:v",
         "libx264",
         "-c:a",
