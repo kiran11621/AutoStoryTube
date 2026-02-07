@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AutoStoryTube</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <main class="container">
+    <header>
+      <h1>AutoStoryTube</h1>
+      <p>Create narrated videos with animated subtitles and upload to YouTube.</p>
+    </header>
+
+    <section class="card">
+      <h2>1. Generate Video</h2>
+      <form id="processForm">
+        <label>
+          Background video (MP4)
+          <input type="file" name="background_video" accept="video/mp4" required />
+        </label>
+        <label>
+          Story script (.txt)
+          <input type="file" name="script_file" accept="text/plain" required />
+        </label>
+        <label>
+          TTS rate
+          <input type="number" name="tts_rate" value="175" min="120" max="240" />
+        </label>
+        <button type="submit">Render Video</button>
+      </form>
+      <div id="processResult" class="result"></div>
+    </section>
+
+    <section class="card">
+      <h2>2. YouTube Upload</h2>
+      <div class="actions">
+        <button id="authButton" type="button">Connect YouTube</button>
+      </div>
+      <form id="uploadForm">
+        <label>
+          Final video (MP4)
+          <input type="file" name="video_file" accept="video/mp4" required />
+        </label>
+        <label>
+          Title
+          <input type="text" name="title" required />
+        </label>
+        <label>
+          Description
+          <textarea name="description" rows="3"></textarea>
+        </label>
+        <label>
+          Tags (comma separated)
+          <input type="text" name="tags" />
+        </label>
+        <label>
+          Thumbnail (optional)
+          <input type="file" name="thumbnail" accept="image/*" />
+        </label>
+        <label>
+          Visibility
+          <select name="visibility">
+            <option value="public">Public</option>
+            <option value="unlisted">Unlisted</option>
+            <option value="private" selected>Private</option>
+          </select>
+        </label>
+        <button type="submit">Upload to YouTube</button>
+      </form>
+      <div id="uploadResult" class="result"></div>
+    </section>
+
+    <section class="card">
+      <h2>FFmpeg Command</h2>
+      <pre id="ffmpegCommand">Run a render to see the exact command.</pre>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
