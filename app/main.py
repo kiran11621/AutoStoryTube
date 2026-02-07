@@ -162,17 +162,20 @@ def process_video(
     ffmpeg_command = [
         "ffmpeg",
         "-y",
+        "-stream_loop",
+        "-1",
         "-i",
         str(video_path),
         "-i",
         str(voice_path),
+        "-t",
+        f"{duration:.2f}",
         "-vf",
         subtitles_filter,
         "-c:v",
         "libx264",
         "-c:a",
         "aac",
-        "-shortest",
         str(output_path),
     ]
 
