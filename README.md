@@ -6,8 +6,16 @@ It runs completely offline **except for the YouTube upload step**.
 
 ## One-command start
 
+### macOS / Linux
+
 ```bash
 ./run.sh
+```
+
+### Windows (PowerShell)
+
+```powershell
+./run.ps1
 ```
 
 Then open: [http://localhost:8000](http://localhost:8000)
@@ -32,6 +40,7 @@ AutoStoryTube/
 │   └── uploads/
 ├── requirements.txt
 ├── run.sh
+├── run.ps1
 └── README.md
 ```
 
@@ -95,7 +104,7 @@ This file is local-only and set to chmod `600` for safety.
 
 - Animated subtitles are done with `.ass` and fade-in/out.
 - For longer scripts, rendering can take several minutes.
-- If FFmpeg is missing, `run.sh` will try to install it on Debian/Ubuntu.
+- If FFmpeg is missing, the start script will prompt you to install it.
 
 ---
 
@@ -103,11 +112,25 @@ This file is local-only and set to chmod `600` for safety.
 
 **`FFmpeg not found`**
 
-Install manually:
+macOS/Linux:
 
 ```bash
 sudo apt-get update
 sudo apt-get install -y ffmpeg
+```
+
+Windows:
+
+```powershell
+winget install Gyan.FFmpeg
+```
+
+**PowerShell blocked script**
+
+If Windows prevents running `run.ps1`:
+
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 ```
 
 **OAuth error**
