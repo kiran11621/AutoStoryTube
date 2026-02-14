@@ -95,3 +95,67 @@ pre {
   border: 1px solid #334155;
   margin-bottom: 8px;
 }
+
+#processForm .subtitle-color {
+  padding: 10px 12px;
+  border: 1px solid #334155;
+  border-radius: 10px;
+  background: #0f172a;
+}
+
+#processForm .subtitle-position {
+  padding: 10px 12px;
+  border: 1px solid #334155;
+  border-radius: 10px;
+  background: #0f172a;
+}
+
+#processForm .subtitle-position select[name="alignment"] {
+  width: 100%;
+  border-color: #475569;
+  background: #111827;
+}
+
+#processForm .subtitle-position select[name="alignment"]:focus {
+  outline: none;
+  border-color: #38bdf8;
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2);
+}
+
+#processForm .subtitle-color input[name="text_color"],
+#processForm .subtitle-color input[name="bg_color"] {
+  width: 100%;
+  min-height: 42px;
+  padding: 4px;
+  cursor: pointer;
+}
+
+#processForm .subtitle-color input[name="text_color"]::-webkit-color-swatch-wrapper,
+#processForm .subtitle-color input[name="bg_color"]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+#processForm .subtitle-color input[name="text_color"]::-webkit-color-swatch,
+#processForm .subtitle-color input[name="bg_color"]::-webkit-color-swatch {
+  border: 1px solid #475569;
+  border-radius: 8px;
+}
+
+#processForm .subtitle-check {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid #334155;
+  border-radius: 10px;
+  background: #0f172a;
+}
+
+#processForm .subtitle-check input[name="bold"],
+#processForm .subtitle-check input[name="italic"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  padding: 0;
+  accent-color: #38bdf8;
+}

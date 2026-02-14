@@ -1,4 +1,4 @@
-# AutoStoryTube
+﻿# AutoStoryTube
 
 AutoStoryTube is a **100% local** web app that turns a background video + story text into a narrated video with animated subtitles, then uploads it to YouTube using the official YouTube Data API v3.
 
@@ -26,25 +26,27 @@ Then open: [http://localhost:8000](http://localhost:8000)
 
 ```
 AutoStoryTube/
-├── app/
-│   ├── main.py
-│   ├── static/
-│   │   ├── app.js
-│   │   └── styles.css
-│   └── templates/
-│       └── index.html
-├── data/
-│   ├── credentials/
-│   │   └── client_secret.json   # you add this
-│   ├── outputs/
-│   ├── scripts/
-│   ├── video_library/
-│   │   ├── catalog.json
-│   └── uploads/
-├── requirements.txt
-├── run.sh
-├── run.ps1
-└── README.md
++-- app/
+|   +-- main.py
+|   +-- static/
+|   |   +-- app.js
+|   |   +-- styles.css
+|   +-- templates/
+|       +-- index.html
++-- data/
+|   +-- credentials/
+|   |   +-- client_secret.json
+|   +-- outputs/
+|   +-- scripts/
+|   +-- uploads/
+|   +-- video_library/
+|   |   +-- catalog.json
+|   +-- voices/
+|       +-- piper/
++-- requirements.txt
++-- run.sh
++-- run.ps1
++-- README.md
 ```
 
 ---
@@ -52,7 +54,8 @@ AutoStoryTube/
 ## How it works
 
 1. **Upload** a background MP4 and a `.txt` script.
-2. The app uses **pyttsx3** (offline TTS) to create a WAV voice track.
+2. The app uses **Piper TTS** (offline) to create a WAV voice track.
+   - If Piper or voice models are unavailable, it falls back to **pyttsx3**.
 3. It generates **animated ASS subtitles** and overlays them with FFmpeg.
 4. It exports a final MP4 and lets you download it.
 5. You can upload directly to YouTube after authenticating.
@@ -114,10 +117,44 @@ This file is local-only and set to chmod `600` for safety.
 
 ---
 
+## Piper voice models (for voice style dropdown)
+
+Voice styles in the UI map to Piper models under:
+
+```
+AutoStoryTube/data/voices/piper/
+```
+
+Current style/gender mapping in code uses these models:
+
+- `en_US-john-medium.onnx`
+- `en_US-kristin-medium.onnx`
+- `en_US-joe-medium.onnx`
+- `en_US-amy-medium.onnx`
+- `en_US-norman-medium.onnx`
+- `en_US-libritts-high.onnx`
+- `en_US-sam-medium.onnx`
+- `en_US-hfc_female-medium.onnx`
+- `en_US-hfc_male-medium.onnx`
+- `en_US-kathleen-low.onnx`
+- `en_US-ryan-high.onnx`
+- `en_US-ljspeech-high.onnx`
+
+Each model should also have its matching metadata file:
+
+- `<model>.onnx.json`
+
+If Piper is unavailable, or the selected model file is missing, the app falls back to local `pyttsx3`.
+
+Install Piper in your environment:
+
+```bash
+pip install piper-tts
+```
 ## Offline guarantee
 
 - All video processing is local using **FFmpeg**.
-- Text-to-speech is offline via **pyttsx3**.
+- Text-to-speech is offline via **Piper** (with local pyttsx3 fallback).
 - The only online step is the YouTube upload.
 
 ---
@@ -162,3 +199,4 @@ Double check the redirect URL in Google Console:
 ```
 http://localhost:8000/oauth2callback
 ```
+
