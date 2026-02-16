@@ -3,6 +3,10 @@ __pycache__/
 *.pyc
 data/uploads/
 data/outputs/
-data/credentials/token.json
+data/credentials/
+!data/credentials/.gitkeep
+data/voices/
+!data/voices/.gitkeep
+!data/voices/piper/.gitkeep
 *.log
 .DS_Store

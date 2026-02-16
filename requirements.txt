@@ -3,6 +3,8 @@ uvicorn==0.30.1
 jinja2==3.1.4
 python-multipart==0.0.9
 pyttsx3==2.90
+piper-tts
+pathvalidate==3.3.1
 google-api-python-client==2.130.0
 google-auth==2.30.0
 google-auth-oauthlib==1.2.0
