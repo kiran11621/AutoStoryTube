@@ -1,6 +1,9 @@
 .venv/
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+Thumbs.db
 data/uploads/
 data/outputs/
 data/credentials/
@@ -10,3 +13,15 @@ data/voices/
 !data/voices/piper/.gitkeep
 *.log
 .DS_Store
+
+# Local test/template artifacts
+_tmp_batch_template.xlsx
+testbatch.xlsx
+test_batch*.xlsx
+data/scripts/story*.txt
+data/video_library/sample_video.mp4
+
+# Frontend local/build artifacts
+frontend/node_modules/
+frontend/dist/
+frontend/dist-ssr/

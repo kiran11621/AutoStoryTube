@@ -6,16 +6,17 @@ import subprocess
 import sys
 import uuid
 import wave
+from io import BytesIO
 from datetime import datetime
 from pathlib import Path
 
 import pyttsx3
 
-from fastapi import FastAPI, File, Form, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 from google.auth.transport.requests import Request as GoogleRequest
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
@@ -203,7 +204,11 @@ def _ffmpeg_filter_path(path: Path) -> str:
 
 
 def _ffmpeg_subtitles_path(path: Path) -> str:
-    return _ffmpeg_filter_path(path.resolve())
+    try:
+        relative = path.relative_to(BASE_DIR)
+    except ValueError:
+        relative = path.resolve()
+    return _ffmpeg_filter_path(relative)
 
 
 def _load_video_catalog() -> list[dict[str, str]]:
@@ -223,6 +228,26 @@ def _library_video_path(code: str) -> Path | None:
             if filename:
                 candidate = VIDEO_LIBRARY_DIR / filename
                 return candidate if candidate.exists() else None
+    return None
+
+
+def _library_video_by_reference(reference: str) -> tuple[Path, dict] | None:
+    ref = str(reference or "").strip().lower()
+    if not ref:
+        return None
+    for entry in _load_video_catalog():
+        filename = str(entry.get("filename") or "").strip()
+        if not filename:
+            continue
+        candidate = VIDEO_LIBRARY_DIR / filename
+        if not candidate.exists():
+            continue
+        code = str(entry.get("code") or "").strip().lower()
+        title = str(entry.get("title") or "").strip().lower()
+        base = Path(filename).stem.lower()
+        full = filename.lower()
+        if ref in {code, title, base, full}:
+            return candidate, entry
     return None
 
 
@@ -253,6 +278,13 @@ def _load_script_from_excel(excel_path: Path, video_code: str) -> str | None:
             if script_path.exists():
                 return script_path.read_text(encoding="utf-8")
     return None
+
+
+def _wav_duration_seconds(wav_path: Path) -> float:
+    with wave.open(str(wav_path), "rb") as wav_file:
+        frames = wav_file.getnframes()
+        rate = wav_file.getframerate()
+        return frames / float(rate)
 
 
 def _audio_duration_seconds(audio_path: Path) -> float:
@@ -427,6 +459,306 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         start_time = end_time
 
     output_path.write_text(header + "\n" + "\n".join(events), encoding="utf-8")
+
+
+def _hex_to_ass_color_batch(hex_str: str | None, default: str = "&H00FFFFFF") -> str:
+    """Convert #RRGGBB or #AARRGGBB to ASS &HAABBGGRR."""
+    if not hex_str or not isinstance(hex_str, str):
+        return default
+    hex_str = hex_str.strip().lstrip("#")
+    if len(hex_str) == 6:
+        r, g, b = hex_str[0:2], hex_str[2:4], hex_str[4:6]
+        a = "00"
+    elif len(hex_str) == 8:
+        a, r, g, b = hex_str[0:2], hex_str[2:4], hex_str[4:6], hex_str[6:8]
+    else:
+        return default
+    return f"&H{a}{b}{g}{r}"
+
+
+def _placement_to_ass_alignment(placement: str | None) -> int:
+    """ASS Alignment: 2=bottom center, 5=middle, 8=top."""
+    if not placement:
+        return 2
+    p = str(placement).strip().lower()
+    if p in ("top", "upper"):
+        return 8
+    if p in ("middle", "center", "mid"):
+        return 5
+    return 2
+
+
+def _to_bool(value: object, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _batch_alignment_value(row: dict) -> int:
+    # Supports either numeric "alignment" (Create Video style) or textual "placement".
+    raw_alignment = row.get("alignment") or row.get("subtitle_alignment")
+    if raw_alignment is not None and str(raw_alignment).strip() != "":
+        try:
+            alignment = int(raw_alignment)
+            if alignment in {1, 2, 3, 4, 5, 6, 7, 8, 9}:
+                return alignment
+        except (TypeError, ValueError):
+            pass
+    return _placement_to_ass_alignment(
+        row.get("placement") or row.get("subtitle_placement") or row.get("subtitle_pl")
+    )
+
+
+def _build_ass_subtitles_styled(
+    text: str,
+    total_duration: float,
+    output_path: Path,
+    *,
+    font_color: str | None = None,
+    font_background: str | None = None,
+    alignment: int = 2,
+) -> None:
+    """Build ASS subtitles with configurable font color, background, and placement."""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        lines = [text.strip()]
+    word_counts = [max(1, len(line.split())) for line in lines]
+    total_words = sum(word_counts)
+    primary = _hex_to_ass_color_batch(font_color, "&H00FFFFFF")
+    back = _hex_to_ass_color_batch(font_background, "&H64000000")
+    header = f"""[Script Info]
+ScriptType: v4.00+
+Collisions: Normal
+PlayResX: 1280
+PlayResY: 720
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Arial,48,{primary},&H000000FF,&H00000000,{back},0,0,0,0,100,100,0,0,1,3,2,{alignment},60,60,80,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+    events = []
+    start_time = 0.0
+    for line, count in zip(lines, word_counts):
+        segment_duration = (count / total_words) * total_duration
+        end_time = start_time + max(0.5, segment_duration)
+        start_stamp = _format_ass_time(start_time)
+        end_stamp = _format_ass_time(end_time)
+        escaped = line.replace("{", "\\{").replace("}", "\\}")
+        events.append(
+            f"Dialogue: 0,{start_stamp},{end_stamp},Default,,0,0,0,,{{\\fad(200,200)}}{escaped}"
+        )
+        start_time = end_time
+    output_path.write_text(header + "\n" + "\n".join(events), encoding="utf-8")
+
+
+def _text_to_speech_with_voice(
+    text: str, output_path: Path, rate: int, voice_id: str | None = None
+) -> None:
+    """TTS with optional voice selection (pyttsx3 voice id or name)."""
+    engine = pyttsx3.init()
+    engine.setProperty("rate", rate)
+    if voice_id and str(voice_id).strip():
+        for v in engine.getProperty("voices"):
+            if voice_id.strip() in (v.id, getattr(v, "name", "")):
+                engine.setProperty("voice", v.id)
+                break
+    engine.save_to_file(text, str(output_path))
+    engine.runAndWait()
+
+
+def _normalize_header(h: str) -> str:
+    """Normalize Excel column header for lookup: lowercase, spaces to underscores."""
+    if not h:
+        return ""
+    return str(h).strip().lower().replace(" ", "_")
+
+
+def _row_library_reference(row: dict) -> str:
+    """
+    Resolve batch library selector precedence.
+    Supported columns: video_code, library_video_code, library_video,
+    library_video_name, library_filename, source_video.
+    """
+    for key in (
+        "video_code",
+        "library_video_code",
+        "library_video",
+        "library_video_name",
+        "library_filename",
+        "source_video",
+    ):
+        value = row.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return ""
+
+
+def _parse_batch_excel(excel_path: Path) -> list[dict]:
+    """
+    Parse Excel into list of row dicts. Each row must have a library selector
+    and script.
+    Library selector columns: video_code, library_video_code, library_video,
+    library_video_name, library_filename, source_video.
+    Script columns: video_script, script_text, or script_file.
+    """
+    workbook = load_workbook(filename=excel_path, read_only=True, data_only=True)
+    sheet = workbook.active
+    headers = [_normalize_header(cell.value) for cell in sheet[1]]
+    rows = []
+    for row in sheet.iter_rows(min_row=2, values_only=True):
+        if not row:
+            continue
+        row_dict = {}
+        for i, val in enumerate(row):
+            if i < len(headers) and headers[i]:
+                v = val
+                if v is not None and not isinstance(v, (int, float)):
+                    v = str(v).strip()
+                row_dict[headers[i]] = v
+        # Resolve script: video_script, script_text, or script_file
+        script = row_dict.get("video_script") or row_dict.get("script_text")
+        if not script and row_dict.get("script_file"):
+            fn = _safe_filename(str(row_dict.get("script_file", "")))
+            if fn:
+                sp = SCRIPTS_DIR / fn
+                if sp.exists():
+                    row_dict["_script_text"] = sp.read_text(encoding="utf-8")
+                else:
+                    row_dict["_script_text"] = None
+            else:
+                row_dict["_script_text"] = None
+        else:
+            row_dict["_script_text"] = script
+        library_ref = _row_library_reference(row_dict)
+        if library_ref:
+            row_dict["_library_ref"] = library_ref
+        if row_dict.get("_library_ref") and row_dict.get("_script_text"):
+            rows.append(row_dict)
+    return rows
+
+
+def _process_one_batch_row(row: dict) -> dict:
+    """
+    Process one Excel row: resolve library video, TTS, ASS, FFmpeg.
+    Returns dict with job_id, output_url, video_name, video_description, video_tags.
+    Raises on error (e.g. library code not found).
+    """
+    job_id = uuid.uuid4().hex
+    library_ref = str(row.get("_library_ref") or _row_library_reference(row)).strip()
+    match = _library_video_by_reference(library_ref)
+    if not match:
+        raise ValueError(f"Library video not found: {library_ref}")
+    video_path, video_entry = match
+    video_code = str(video_entry.get("code") or library_ref).strip()
+    text = row.get("_script_text") or ""
+    tts_rate = 175
+    try:
+        r = row.get("tts_rate")
+        if r is not None:
+            tts_rate = max(120, min(240, int(r)))
+    except (TypeError, ValueError):
+        pass
+    voice_style = str(row.get("voice_style") or "professional").strip().lower()
+    if voice_style not in VOICE_STYLE_PRESETS:
+        voice_style = "professional"
+    voice_gender = str(row.get("voice_gender") or "male").strip().lower()
+    if voice_gender not in {"male", "female"}:
+        voice_gender = "male"
+
+    voice_path = OUTPUT_DIR / f"{job_id}_voice.wav"
+    # Backward compatibility: use explicit pyttsx3 voice id/name if provided.
+    if row.get("voice_type"):
+        _text_to_speech_with_voice(
+            text,
+            voice_path,
+            tts_rate,
+            voice_id=str(row.get("voice_type")).strip(),
+        )
+        tts_engine = "pyttsx3"
+        voice_model = "pyttsx3-selected-voice"
+    else:
+        tts_engine, voice_model = _text_to_speech(
+            text, voice_path, tts_rate, voice_style, voice_gender
+        )
+
+    duration = _wav_duration_seconds(voice_path)
+    subtitles_path = OUTPUT_DIR / f"{job_id}.ass"
+    text_color = str(
+        row.get("text_color")
+        or row.get("subtitle_text_color")
+        or row.get("subtitle_tc")
+        or row.get("font_color")
+        or "#ffffff"
+    ).strip()
+    bg_color = str(
+        row.get("bg_color")
+        or row.get("subtitle_bg_color")
+        or row.get("subtitle_bg")
+        or row.get("font_background")
+        or "#000000"
+    ).strip()
+    _build_ass_subtitles(
+        text,
+        duration,
+        subtitles_path,
+        text_color=text_color,
+        bg_color=bg_color,
+        bold=_to_bool(row.get("bold") if row.get("bold") is not None else row.get("subtitle_bold", row.get("subtitle_b")), default=False),
+        italic=_to_bool(row.get("italic") if row.get("italic") is not None else row.get("subtitle_italic", row.get("subtitle_it")), default=False),
+        alignment=_batch_alignment_value(row),
+        font_size=48,
+    )
+    output_path = OUTPUT_DIR / f"{job_id}_final.mp4"
+    subtitles_filter = (
+        f"subtitles=filename='{_ffmpeg_subtitles_path(subtitles_path)}':charenc=UTF-8"
+    )
+    ffmpeg_command = [
+        "ffmpeg",
+        "-y",
+        "-stream_loop",
+        "-1",
+        "-i",
+        str(video_path),
+        "-i",
+        str(voice_path),
+        "-t",
+        f"{duration:.2f}",
+        "-vf",
+        subtitles_filter,
+        "-c:v",
+        "libx264",
+        "-c:a",
+        "aac",
+        str(output_path),
+    ]
+    _run_ffmpeg(ffmpeg_command)
+    output_video_name = row.get("output_video_name")
+    if output_video_name is not None and str(output_video_name).strip():
+        video_name = str(output_video_name).strip()
+    else:
+        video_name = row.get("video_name")
+        if video_name is not None and str(video_name).strip():
+            video_name = str(video_name).strip()
+        else:
+            video_name = str(video_entry.get("title") or video_code).strip()
+    return {
+        "job_id": job_id,
+        "output_url": f"/api/download/{output_path.name}",
+        "video_name": video_name,
+        "video_description": str(row.get("video_description") or ""),
+        "video_tags": str(row.get("video_tags") or ""),
+        "library_video_code": video_code,
+        "library_video_title": str(video_entry.get("title") or ""),
+        "tts_engine": tts_engine,
+        "voice_style": voice_style,
+        "voice_gender": voice_gender,
+        "voice_model": voice_model,
+    }
 @app.post("/api/process")
 def process_video(
     background_video: UploadFile | None = File(None),
@@ -506,7 +838,9 @@ def process_video(
 
     output_path = OUTPUT_DIR / f"{job_id}_final.mp4"
 
-    subtitles_filter = f"ass=filename='{_ffmpeg_subtitles_path(subtitles_path)}'"
+    subtitles_filter = (
+        f"subtitles=filename='{_ffmpeg_subtitles_path(subtitles_path)}':charenc=UTF-8"
+    )
     ffmpeg_command = [
         "ffmpeg",
         "-y",
@@ -541,10 +875,149 @@ def process_video(
         }
     
     )
+
+
+@app.get("/api/batch/schema")
+def batch_schema() -> JSONResponse:
+    """Return expected Excel columns for batch upload (for frontend)."""
+    return JSONResponse(
+        {
+            "required": [
+                {
+                    "key": "video_code",
+                    "description": "Primary library selector. Alternatives: library_video_code, library_video_name, library_filename, library_video, source_video.",
+                },
+                {
+                    "key": "video_script",
+                    "description": "Script text for TTS and subtitles. Alternative: script_text or script_file (filename in data/scripts).",
+                },
+            ],
+            "optional": [
+                {"key": "video_name", "description": "Output title for generated video metadata."},
+                {"key": "output_video_name", "description": "Explicit output title override (preferred)."},
+                {"key": "library_video_code", "description": "Alternative library selector by catalog code."},
+                {"key": "library_video_name", "description": "Alternative library selector by catalog title."},
+                {"key": "library_filename", "description": "Alternative library selector by catalog filename."},
+                {"key": "library_video", "description": "Alternative generic library selector (code/title/filename)."},
+                {"key": "source_video", "description": "Alternative generic library selector (code/title/filename)."},
+                {"key": "video_description", "description": "Video description (e.g. for YouTube)."},
+                {"key": "video_tags", "description": "Comma-separated tags."},
+                {"key": "voice_style", "description": "professional, casual, narrator, energetic, calm, dramatic."},
+                {"key": "voice_gender", "description": "male or female."},
+                {"key": "voice_type", "description": "Optional pyttsx3 voice id/name override."},
+                {"key": "text_color", "description": "Subtitle text color, e.g. #FFFFFF (alias: font_color)."},
+                {"key": "bg_color", "description": "Subtitle background color, e.g. #000000 (alias: font_background)."},
+                {"key": "bold", "description": "true/false."},
+                {"key": "italic", "description": "true/false."},
+                {"key": "alignment", "description": "ASS alignment 1-9 (Create Video style)."},
+                {"key": "placement", "description": "Alias for alignment: top, middle, or bottom."},
+                {"key": "tts_rate", "description": "Speech rate (120-240), default 175."},
+            ],
+        }
+    )
+
+
+@app.get("/api/batch/template")
+def batch_template() -> StreamingResponse:
+    """Download an Excel template for batch processing."""
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "batch_videos"
+    headers = [
+        "video_code",
+        "video_script",
+        "script_file",
+        "output_video_name",
+        "video_description",
+        "video_tags",
+        "voice_style",
+        "voice_gender",
+        "subtitle_text_color",
+        "subtitle_bg_color",
+        "subtitle_bold",
+        "subtitle_italic",
+        "subtitle_placement",
+        "tts_rate",
+    ]
+    sample = [
+        "sample_loop",
+        "",
+        "story1.txt",
+        "My Batch Video",
+        "Generated from batch template.",
+        "story,automation",
+        "professional",
+        "male",
+        "#FFFFFF",
+        "#000000",
+        "false",
+        "false",
+        "bottom",
+        "175",
+    ]
+    sheet.append(headers)
+    sheet.append(sample)
+
+    output = BytesIO()
+    workbook.save(output)
+    output.seek(0)
+    filename = f"batch_template_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.post("/api/process-batch")
+def process_batch(excel_file: UploadFile = File(...)) -> JSONResponse:
+    """
+    Accept an Excel file with one row per video.
+    Required: one library selector column (video_code or aliases) and one script column
+    (video_script/script_text/script_file).
+    Optional: output titles, description/tags, voice/style columns, and subtitle style columns.
+    Returns { "jobs": [ { job_id, output_url, video_name, video_description, video_tags } | { error, video_code } ] }.
+    """
+    if not excel_file.filename or not str(excel_file.filename).lower().endswith(
+        (".xlsx", ".xls")
+    ):
+        return JSONResponse(
+            {"error": "Please upload an Excel file (.xlsx or .xls)."},
+            status_code=400,
+        )
+    upload_id = uuid.uuid4().hex
+    excel_path = UPLOAD_DIR / f"{upload_id}_{_safe_filename(excel_file.filename)}"
+    with excel_path.open("wb") as f:
+        shutil.copyfileobj(excel_file.file, f)
+    rows = _parse_batch_excel(excel_path)
+    if not rows:
+        return JSONResponse(
+            {
+                "error": "No valid rows found. Each row must have a library selector (video_code or aliases) and video_script (or script_text or script_file)."
+            },
+            status_code=400,
+        )
+    jobs = []
+    for row in rows:
+        try:
+            jobs.append(_process_one_batch_row(row))
+        except Exception as e:
+            jobs.append(
+                {
+                    "error": str(e),
+                    "video_code": str(row.get("video_code", "")).strip(),
+                    "library_ref": str(row.get("_library_ref") or _row_library_reference(row)).strip(),
+                }
+            )
+    return JSONResponse({"jobs": jobs})
 @app.get("/api/download/{filename}")
 def download_output(filename: str) -> FileResponse:
-    file_path = OUTPUT_DIR / filename
-    return FileResponse(file_path, media_type="video/mp4", filename=filename)
+    # Use only basename to prevent path traversal (e.g. batch output files)
+    safe_name = Path(filename).name or filename
+    file_path = OUTPUT_DIR / safe_name
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(file_path, media_type="video/mp4", filename=safe_name)
 
 
 def _load_credentials() -> Credentials | None:
