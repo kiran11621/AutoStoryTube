@@ -3,7 +3,17 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 Thumbs.db
+.idea/
+.vscode/
+.env
+.env.*
+!.env.example
 data/uploads/
 data/outputs/
 data/credentials/
@@ -25,3 +35,6 @@ data/video_library/sample_video.mp4
 frontend/node_modules/
 frontend/dist/
 frontend/dist-ssr/
+frontend/.vite/
+frontend/.env
+frontend/.env.local

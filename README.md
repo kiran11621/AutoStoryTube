@@ -2,6 +2,11 @@
 
 AutoStoryTube is a **100% local** web app that turns a background video + story text into a narrated video with animated subtitles, then uploads it to YouTube using the official YouTube Data API v3.
 
+The YouTube upload flow supports all three post-processing features:
+- Thumbnail (manual upload or auto first-frame thumbnail)
+- Logo overlay (position + size)
+- End credits text on the final seconds of the video
+
 It runs completely offline **except for the YouTube upload step**.
 
 ## One-command start
@@ -26,33 +31,45 @@ Then open: [http://localhost:8000](http://localhost:8000)
 
 ```
 AutoStoryTube/
-+-- app/
-|   +-- main.py
-|   +-- static/
-|   |   +-- app.js
-|   |   +-- styles.css
-|   +-- templates/
-|       +-- index.html
-+-- frontend/
-|   +-- src/
-|   |   +-- components/
-|   +-- public/
-|   +-- package.json
-|   +-- vite.config.js
-+-- data/
-|   +-- credentials/
-|   |   +-- client_secret.json
-|   +-- outputs/
-|   +-- scripts/
-|   +-- uploads/
-|   +-- video_library/
-|   |   +-- catalog.json
-|   +-- voices/
-|       +-- piper/
-+-- requirements.txt
-+-- run.sh
-+-- run.ps1
-+-- README.md
+|-- app
+|   |-- main.py                         # FastAPI backend (render + batch + YouTube upload)
+|   |-- static
+|   |   |-- app.js                      # legacy static UI
+|   |   `-- styles.css                  # legacy static UI
+|   `-- templates
+|       `-- index.html                  # legacy static UI template
+|-- frontend
+|   |-- index.html
+|   |-- package.json
+|   |-- vite.config.js
+|   `-- src
+|       |-- App.jsx
+|       |-- main.jsx
+|       |-- index.css
+|       |-- components
+|       |   |-- CreateVideo.jsx         # single render flow
+|       |   |-- BulkUpload.jsx          # Excel batch flow
+|       |   `-- YoutubeUpload.jsx       # upload + thumbnail/logo/end credits
+|       `-- pages
+|           `-- Dashboard.jsx
+|-- data
+|   |-- credentials
+|   |   |-- .gitkeep
+|   |   |-- client_secret.json          # local only, do not commit
+|   |   `-- token.json                  # local only, generated after OAuth
+|   |-- outputs                          # rendered videos and generated upload intermediates
+|   |-- scripts
+|   |   `-- README.md
+|   |-- uploads
+|   |-- video_library
+|   |   |-- catalog.json
+|   |   `-- README.md
+|   `-- voices
+|       `-- piper
+|-- requirements.txt
+|-- run.ps1
+|-- run.sh
+`-- README.md
 ```
 
 ---
@@ -65,6 +82,16 @@ AutoStoryTube/
 3. It generates **animated ASS subtitles** and overlays them with FFmpeg.
 4. It exports a final MP4 and lets you download it.
 5. You can upload directly to YouTube after authenticating.
+   - Thumbnail: upload your own image or let the app generate one from the first frame.
+   - Logo: apply an optional PNG logo overlay with position and scale controls.
+   - End credits: add optional closing text during the last N seconds of the video.
+
+### YouTube upload result fields
+
+`/api/youtube/upload` returns status fields so UI can report exactly what was applied:
+- `thumbnail_applied`, `thumbnail_source`, `thumbnail_error`
+- `logo_applied`, `logo_error`
+- `end_credits_applied`, `end_credits_error`
 
 ### Video library + Excel mapping (optional)
 
@@ -84,6 +111,9 @@ Required columns per row:
 Common optional columns:
 
 - `output_video_name`, `video_description`, `video_tags`
+- YouTube upload controls:
+  - `publish_at` (future datetime; row gets scheduled on YouTube)
+  - `visibility` (`public` / `private` / `unlisted`, used when `publish_at` is blank)
 - `voice_style`, `voice_gender`, `tts_rate`
 - subtitle styling:
   - `text_color` / `subtitle_text_color`
@@ -94,6 +124,16 @@ Common optional columns:
 
 The app also supports downloading a ready-made batch template from the Bulk
 Upload UI (`Download Batch Template`).
+
+### Bulk generate + YouTube upload
+
+In the Bulk Upload page, enable `Generate + upload to YouTube` to process each
+Excel row and upload it directly to YouTube.
+
+- If a row has `publish_at`, the upload is scheduled (`private` + `publishAt`).
+- If `publish_at` is blank/invalid/past, normal `visibility` is used.
+- If `publish_at` has no timezone (example `2026-03-03T10:00`), it is treated
+  as your local machine time and then converted to UTC for YouTube.
 
 ---
 
