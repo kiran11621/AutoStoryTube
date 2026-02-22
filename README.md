@@ -6,6 +6,7 @@ The YouTube upload flow supports all three post-processing features:
 - Thumbnail (manual upload or auto first-frame thumbnail)
 - Logo overlay (position + size)
 - End credits text on the final seconds of the video
+- Optional Shorts mode (converts video to vertical 9:16 and max 59s)
 
 It runs completely offline **except for the YouTube upload step**.
 
@@ -85,6 +86,7 @@ AutoStoryTube/
    - Thumbnail: upload your own image or let the app generate one from the first frame.
    - Logo: apply an optional PNG logo overlay with position and scale controls.
    - End credits: add optional closing text during the last N seconds of the video.
+   - Shorts mode: converts the upload to vertical 1080x1920 and trims to 59 seconds.
 
 ### YouTube upload result fields
 
@@ -92,6 +94,7 @@ AutoStoryTube/
 - `thumbnail_applied`, `thumbnail_source`, `thumbnail_error`
 - `logo_applied`, `logo_error`
 - `end_credits_applied`, `end_credits_error`
+- `short_mode_enabled`, `short_processed`, `short_error`
 
 ### Video library + Excel mapping (optional)
 

@@ -38,3 +38,5 @@ frontend/dist-ssr/
 frontend/.vite/
 frontend/.env
 frontend/.env.local
+frontend/.env.*
+!frontend/.env.example
