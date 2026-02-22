@@ -7,7 +7,7 @@ import sys
 import uuid
 import wave
 from io import BytesIO
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pyttsx3
@@ -21,6 +21,7 @@ from google.auth.transport.requests import Request as GoogleRequest
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -193,6 +194,129 @@ def _safe_filename(name: str) -> str:
     return re.sub(r"[^a-zA-Z0-9._-]", "_", name)
 
 
+def _generate_thumbnail_from_video(video_path: Path, thumbnail_path: Path) -> None:
+    command = [
+        "ffmpeg",
+        "-y",
+        "-ss",
+        "0.6",
+        "-i",
+        str(video_path),
+        "-frames:v",
+        "1",
+        "-q:v",
+        "2",
+        str(thumbnail_path),
+    ]
+    _run_ffmpeg(command)
+
+
+def _apply_logo_overlay_to_video(
+    video_path: Path,
+    logo_path: Path,
+    output_path: Path,
+    logo_position: str,
+    logo_scale_percent: int,
+) -> None:
+    position_map = {
+        "top-left": "20:20",
+        "top-right": "W-w-20:20",
+        "bottom-left": "20:H-h-20",
+        "bottom-right": "W-w-20:H-h-20",
+        "center": "(W-w)/2:(H-h)/2",
+    }
+    overlay_expr = position_map.get(logo_position, position_map["top-right"])
+    scale_factor = max(5, min(40, logo_scale_percent)) / 100.0
+    filter_complex = (
+        f"[1:v][0:v]scale2ref=w=iw*{scale_factor:.4f}:h=ow/mdar[logo][base];"
+        f"[base][logo]overlay={overlay_expr}[v]"
+    )
+    command = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(video_path),
+        "-i",
+        str(logo_path),
+        "-filter_complex",
+        filter_complex,
+        "-map",
+        "[v]",
+        "-map",
+        "0:a?",
+        "-c:v",
+        "libx264",
+        "-c:a",
+        "copy",
+        "-movflags",
+        "+faststart",
+        str(output_path),
+    ]
+    _run_ffmpeg(command)
+
+
+def _video_duration_seconds(video_path: Path) -> float:
+    command = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        str(video_path),
+    ]
+    process = subprocess.run(command, capture_output=True, text=True)
+    if process.returncode != 0:
+        raise RuntimeError(f"FFprobe failed: {process.stderr}")
+    try:
+        return float((process.stdout or "").strip())
+    except ValueError as exc:
+        raise RuntimeError("Unable to parse video duration.") from exc
+
+
+def _ffmpeg_drawtext_escape(text: str) -> str:
+    escaped = text.replace("\\", "\\\\")
+    escaped = escaped.replace(":", r"\:")
+    escaped = escaped.replace("'", r"\'")
+    escaped = escaped.replace("%", r"\%")
+    escaped = escaped.replace("\n", r"\n")
+    return escaped
+
+
+def _apply_end_credits_to_video(
+    video_path: Path,
+    output_path: Path,
+    credits_text: str,
+    credits_duration_sec: int,
+) -> None:
+    duration = _video_duration_seconds(video_path)
+    credits_window = max(2, min(30, int(credits_duration_sec)))
+    start_at = max(0.0, duration - float(credits_window))
+    escaped_text = _ffmpeg_drawtext_escape(credits_text.strip())
+    filter_chain = (
+        f"drawbox=x=0:y=ih-240:w=iw:h=240:color=black@0.70:t=fill:enable='gte(t,{start_at:.3f})',"
+        f"drawtext=text='{escaped_text}':fontcolor=white:fontsize=44:"
+        f"x=(w-text_w)/2:y=h-170:line_spacing=12:enable='gte(t,{start_at:.3f})'"
+    )
+    command = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(video_path),
+        "-vf",
+        filter_chain,
+        "-c:v",
+        "libx264",
+        "-c:a",
+        "copy",
+        "-movflags",
+        "+faststart",
+        str(output_path),
+    ]
+    _run_ffmpeg(command)
+
+
 def _ffmpeg_filter_path(path: Path) -> str:
     normalized = path.as_posix()
     return (
@@ -209,6 +333,29 @@ def _ffmpeg_subtitles_path(path: Path) -> str:
     except ValueError:
         relative = path.resolve()
     return _ffmpeg_filter_path(relative)
+
+
+def _parse_publish_at(publish_at: str) -> str | None:
+    """Parse publish_at to RFC 3339 UTC string for YouTube.
+
+    Returns None when the value is blank, invalid, or in the past.
+    """
+    if not publish_at or not str(publish_at).strip():
+        return None
+    raw_value = str(publish_at).strip()
+    try:
+        # Accept ISO values with or without timezone.
+        dt = datetime.fromisoformat(raw_value.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            # For naive datetimes (common from Excel), assume local system timezone.
+            local_tz = datetime.now().astimezone().tzinfo or timezone.utc
+            dt = dt.replace(tzinfo=local_tz)
+        utc_value = dt.astimezone(timezone.utc)
+        if utc_value <= datetime.now(timezone.utc):
+            return None
+        return utc_value.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    except (TypeError, ValueError):
+        return None
 
 
 def _load_video_catalog() -> list[dict[str, str]]:
@@ -902,6 +1049,8 @@ def batch_schema() -> JSONResponse:
                 {"key": "source_video", "description": "Alternative generic library selector (code/title/filename)."},
                 {"key": "video_description", "description": "Video description (e.g. for YouTube)."},
                 {"key": "video_tags", "description": "Comma-separated tags."},
+                {"key": "publish_at", "description": "Optional YouTube schedule time. Supports ISO format; converted to UTC for YouTube."},
+                {"key": "visibility", "description": "YouTube visibility when publish_at is blank: public, private, or unlisted."},
                 {"key": "voice_style", "description": "professional, casual, narrator, energetic, calm, dramatic."},
                 {"key": "voice_gender", "description": "male or female."},
                 {"key": "voice_type", "description": "Optional pyttsx3 voice id/name override."},
@@ -930,6 +1079,8 @@ def batch_template() -> StreamingResponse:
         "output_video_name",
         "video_description",
         "video_tags",
+        "publish_at",
+        "visibility",
         "voice_style",
         "voice_gender",
         "subtitle_text_color",
@@ -946,6 +1097,8 @@ def batch_template() -> StreamingResponse:
         "My Batch Video",
         "Generated from batch template.",
         "story,automation",
+        "2026-03-03T10:00",
+        "private",
         "professional",
         "male",
         "#FFFFFF",
@@ -1010,6 +1163,121 @@ def process_batch(excel_file: UploadFile = File(...)) -> JSONResponse:
                 }
             )
     return JSONResponse({"jobs": jobs})
+
+
+@app.post("/api/process-batch-youtube")
+def process_batch_youtube(excel_file: UploadFile = File(...)) -> JSONResponse:
+    """
+    Accept an Excel file with one row per video, generate each video, then upload to YouTube.
+    Supports optional row-wise scheduling via publish_at.
+    """
+    creds = _load_credentials()
+    if not creds:
+        return JSONResponse({"error": "YouTube not authorized."}, status_code=401)
+    if not excel_file.filename or not str(excel_file.filename).lower().endswith(
+        (".xlsx", ".xls")
+    ):
+        return JSONResponse(
+            {"error": "Please upload an Excel file (.xlsx or .xls)."},
+            status_code=400,
+        )
+
+    upload_id = uuid.uuid4().hex
+    excel_path = UPLOAD_DIR / f"{upload_id}_{_safe_filename(excel_file.filename)}"
+    with excel_path.open("wb") as f:
+        shutil.copyfileobj(excel_file.file, f)
+    rows = _parse_batch_excel(excel_path)
+    if not rows:
+        return JSONResponse(
+            {
+                "error": "No valid rows found. Each row must have a library selector (video_code or aliases) and video_script (or script_text or script_file)."
+            },
+            status_code=400,
+        )
+
+    service = build("youtube", "v3", credentials=creds)
+    jobs = []
+    for idx, row in enumerate(rows, start=1):
+        try:
+            generated = _process_one_batch_row(row)
+            output_url = str(generated.get("output_url") or "").strip()
+            output_name = Path(output_url).name
+            upload_video_path = OUTPUT_DIR / output_name
+            if not upload_video_path.exists():
+                raise FileNotFoundError(f"Generated output not found: {output_name}")
+
+            title = str(
+                row.get("output_video_name")
+                or row.get("video_name")
+                or generated.get("video_name")
+                or f"Batch Video {idx}"
+            ).strip()
+            description = str(row.get("video_description") or "").strip()
+            tags = [tag.strip() for tag in str(row.get("video_tags") or "").split(",") if tag.strip()]
+
+            raw_visibility = str(row.get("visibility") or "private").strip().lower()
+            publish_at_input = str(row.get("publish_at") or "").strip()
+            rfc3339_publish_at = _parse_publish_at(publish_at_input)
+            if rfc3339_publish_at:
+                status_dict: dict[str, str] = {
+                    "privacyStatus": "private",
+                    "publishAt": rfc3339_publish_at,
+                }
+            else:
+                safe_visibility = (
+                    raw_visibility
+                    if raw_visibility in ("public", "private", "unlisted")
+                    else "private"
+                )
+                status_dict = {"privacyStatus": safe_visibility}
+
+            request_body = {
+                "snippet": {
+                    "title": title,
+                    "description": description,
+                    "tags": tags,
+                    "categoryId": "22",
+                },
+                "status": status_dict,
+            }
+
+            upload_request = service.videos().insert(
+                part=",".join(request_body.keys()),
+                body=request_body,
+                media_body=MediaFileUpload(str(upload_video_path), resumable=True),
+            )
+            response = upload_request.execute()
+
+            result = {
+                **generated,
+                "youtube_uploaded": True,
+                "youtube_video_id": response.get("id"),
+                "youtube_video_url": f"https://www.youtube.com/watch?v={response.get('id')}",
+            }
+            if rfc3339_publish_at:
+                result["scheduled_publish_at"] = rfc3339_publish_at
+            jobs.append(result)
+        except HttpError as exc:
+            jobs.append(
+                {
+                    "error": str(exc),
+                    "youtube_uploaded": False,
+                    "video_code": str(row.get("video_code", "")).strip(),
+                    "library_ref": str(row.get("_library_ref") or _row_library_reference(row)).strip(),
+                }
+            )
+        except Exception as exc:
+            jobs.append(
+                {
+                    "error": str(exc),
+                    "youtube_uploaded": False,
+                    "video_code": str(row.get("video_code", "")).strip(),
+                    "library_ref": str(row.get("_library_ref") or _row_library_reference(row)).strip(),
+                }
+            )
+    return JSONResponse({"jobs": jobs})
+
+
 @app.get("/api/download/{filename}")
 def download_output(filename: str) -> FileResponse:
     # Use only basename to prevent path traversal (e.g. batch output files)
@@ -1081,8 +1349,14 @@ def youtube_upload(
     description: str = Form(""),
     tags: str = Form(""),
     visibility: str = Form("private"),
+    publish_at: str = Form(""),
     video_file: UploadFile = File(...),
     thumbnail: UploadFile | None = File(None),
+    logo_file: UploadFile | None = File(None),
+    logo_position: str = Form("top-right"),
+    logo_scale_percent: int = Form(15),
+    end_credits_text: str = Form(""),
+    end_credits_duration_sec: int = Form(5),
 ) -> JSONResponse:
     creds = _load_credentials()
     if not creds:
@@ -1094,6 +1368,60 @@ def youtube_upload(
     video_path = OUTPUT_DIR / f"{video_id}_{_safe_filename(video_file.filename)}"
     with video_path.open("wb") as video_buffer:
         shutil.copyfileobj(video_file.file, video_buffer)
+    upload_video_path = video_path
+    logo_applied = False
+    logo_error = None
+    end_credits_applied = False
+    end_credits_error = None
+    if logo_file is not None:
+        safe_logo_name = _safe_filename(logo_file.filename or "logo.png")
+        logo_path = OUTPUT_DIR / f"{video_id}_logo_{safe_logo_name}"
+        with logo_path.open("wb") as logo_buffer:
+            shutil.copyfileobj(logo_file.file, logo_buffer)
+        logo_output_path = OUTPUT_DIR / f"{video_id}_with_logo.mp4"
+        try:
+            _apply_logo_overlay_to_video(
+                video_path=video_path,
+                logo_path=logo_path,
+                output_path=logo_output_path,
+                logo_position=(logo_position or "top-right").strip().lower(),
+                logo_scale_percent=logo_scale_percent,
+            )
+            upload_video_path = logo_output_path
+            logo_applied = True
+        except Exception as exc:
+            return JSONResponse(
+                {
+                    "error": "Failed to apply logo overlay.",
+                    "details": str(exc),
+                },
+                status_code=400,
+            )
+    if (end_credits_text or "").strip():
+        credits_output_path = OUTPUT_DIR / f"{video_id}_with_credits.mp4"
+        try:
+            _apply_end_credits_to_video(
+                video_path=upload_video_path,
+                output_path=credits_output_path,
+                credits_text=end_credits_text,
+                credits_duration_sec=end_credits_duration_sec,
+            )
+            upload_video_path = credits_output_path
+            end_credits_applied = True
+        except Exception as exc:
+            end_credits_error = str(exc)
+
+    rfc3339_publish_at = _parse_publish_at(publish_at)
+    if rfc3339_publish_at:
+        status_dict: dict[str, str] = {
+            "privacyStatus": "private",
+            "publishAt": rfc3339_publish_at,
+        }
+    else:
+        safe_visibility = (
+            visibility if visibility in ("public", "private", "unlisted") else "private"
+        )
+        status_dict = {"privacyStatus": safe_visibility}
 
     request_body = {
         "snippet": {
@@ -1102,32 +1430,75 @@ def youtube_upload(
             "tags": [tag.strip() for tag in tags.split(",") if tag.strip()],
             "categoryId": "22",
         },
-        "status": {"privacyStatus": visibility},
+        "status": status_dict,
     }
 
-    media = MediaFileUpload(str(video_path), resumable=True)
+    media = MediaFileUpload(str(upload_video_path), resumable=True)
     upload_request = service.videos().insert(
         part=",".join(request_body.keys()),
         body=request_body,
         media_body=media,
     )
-    response = upload_request.execute()
+    try:
+        response = upload_request.execute()
+    except HttpError as exc:
+        return JSONResponse(
+            {
+                "error": "YouTube rejected the upload request.",
+                "youtube_reason": str(exc),
+            },
+            status_code=400,
+        )
+    except Exception as exc:
+        return JSONResponse(
+            {"error": "Failed to upload video to YouTube.", "details": str(exc)},
+            status_code=500,
+        )
+
+    thumbnail_source = "none"
+    thumbnail_applied = False
+    thumbnail_error = None
 
     if thumbnail is not None:
         thumbnail_path = OUTPUT_DIR / f"{video_id}_thumb_{_safe_filename(thumbnail.filename)}"
         with thumbnail_path.open("wb") as thumb_buffer:
             shutil.copyfileobj(thumbnail.file, thumb_buffer)
-        service.thumbnails().set(
-            videoId=response["id"],
-            media_body=MediaFileUpload(str(thumbnail_path)),
-        ).execute()
+        try:
+            service.thumbnails().set(
+                videoId=response["id"],
+                media_body=MediaFileUpload(str(thumbnail_path)),
+            ).execute()
+            thumbnail_source = "manual"
+            thumbnail_applied = True
+        except Exception as exc:
+            thumbnail_error = str(exc)
+    else:
+        auto_thumbnail_path = OUTPUT_DIR / f"{video_id}_thumb_auto.jpg"
+        try:
+            _generate_thumbnail_from_video(video_path, auto_thumbnail_path)
+            service.thumbnails().set(
+                videoId=response["id"],
+                media_body=MediaFileUpload(str(auto_thumbnail_path)),
+            ).execute()
+            thumbnail_source = "auto"
+            thumbnail_applied = True
+        except Exception as exc:
+            thumbnail_error = str(exc)
 
-    return JSONResponse(
-        {
-            "video_id": response.get("id"),
-            "video_url": f"https://www.youtube.com/watch?v={response.get('id')}",
-        }
-    )
+    payload = {
+        "video_id": response.get("id"),
+        "video_url": f"https://www.youtube.com/watch?v={response.get('id')}",
+        "thumbnail_applied": thumbnail_applied,
+        "thumbnail_source": thumbnail_source,
+        "thumbnail_error": thumbnail_error,
+        "logo_applied": logo_applied,
+        "logo_error": logo_error,
+        "end_credits_applied": end_credits_applied,
+        "end_credits_error": end_credits_error,
+    }
+    if rfc3339_publish_at:
+        payload["scheduled_publish_at"] = rfc3339_publish_at
+    return JSONResponse(payload)
 
 
 @app.get("/api/status")
