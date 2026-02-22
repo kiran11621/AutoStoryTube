@@ -1,4 +1,4 @@
-﻿# AutoStoryTube
+# AutoStoryTube
 
 AutoStoryTube is a **100% local** web app that turns a background video + story text into a narrated video with animated subtitles, then uploads it to YouTube using the official YouTube Data API v3.
 
@@ -33,6 +33,12 @@ AutoStoryTube/
 |   |   +-- styles.css
 |   +-- templates/
 |       +-- index.html
++-- frontend/
+|   +-- src/
+|   |   +-- components/
+|   +-- public/
+|   +-- package.json
+|   +-- vite.config.js
 +-- data/
 |   +-- credentials/
 |   |   +-- client_secret.json
@@ -66,18 +72,28 @@ You can keep reusable background videos in `data/video_library` and list them
 in `data/video_library/catalog.json`. The UI will show the list and let you
 select a video by code instead of uploading every time.
 
-If you want to map scripts by code in bulk, upload an Excel file with these
-columns:
+For batch generation, upload one Excel file where each row is one video.
+
+Required columns per row:
 
 - `video_code` (matches the catalog code)
-- `script_text` (the script content for that code)
+- one script source:
+  - `video_script` or `script_text`, or
+  - `script_file` (filename of a `.txt` inside `data/scripts`)
 
-When you choose a library code and upload the Excel, the app will use the
-matching `script_text` for that code.
+Common optional columns:
 
-If you prefer to keep scripts in files, add a `script_file` column with the
-filename of a `.txt` file stored in `data/scripts`. The app will load that file
-for the matching `video_code`.
+- `output_video_name`, `video_description`, `video_tags`
+- `voice_style`, `voice_gender`, `tts_rate`
+- subtitle styling:
+  - `text_color` / `subtitle_text_color`
+  - `bg_color` / `subtitle_bg_color`
+  - `bold` / `subtitle_bold`
+  - `italic` / `subtitle_italic`
+  - `placement` / `subtitle_placement`
+
+The app also supports downloading a ready-made batch template from the Bulk
+Upload UI (`Download Batch Template`).
 
 ---
 
@@ -199,4 +215,3 @@ Double check the redirect URL in Google Console:
 ```
 http://localhost:8000/oauth2callback
 ```
-
