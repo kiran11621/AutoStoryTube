@@ -317,6 +317,35 @@ def _apply_end_credits_to_video(
     _run_ffmpeg(command)
 
 
+def _prepare_video_for_shorts(
+    video_path: Path,
+    output_path: Path,
+    max_duration_sec: int = 59,
+) -> None:
+    filter_chain = (
+        "scale=1080:1920:force_original_aspect_ratio=decrease,"
+        "pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black,setsar=1"
+    )
+    command = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(video_path),
+        "-t",
+        str(max_duration_sec),
+        "-vf",
+        filter_chain,
+        "-c:v",
+        "libx264",
+        "-c:a",
+        "aac",
+        "-movflags",
+        "+faststart",
+        str(output_path),
+    ]
+    _run_ffmpeg(command)
+
+
 def _ffmpeg_filter_path(path: Path) -> str:
     normalized = path.as_posix()
     return (
@@ -1350,6 +1379,7 @@ def youtube_upload(
     tags: str = Form(""),
     visibility: str = Form("private"),
     publish_at: str = Form(""),
+    upload_as_short: str = Form(""),
     video_file: UploadFile = File(...),
     thumbnail: UploadFile | None = File(None),
     logo_file: UploadFile | None = File(None),
@@ -1373,6 +1403,9 @@ def youtube_upload(
     logo_error = None
     end_credits_applied = False
     end_credits_error = None
+    short_mode_enabled = _to_bool(upload_as_short, default=False)
+    short_processed = False
+    short_error = None
     if logo_file is not None:
         safe_logo_name = _safe_filename(logo_file.filename or "logo.png")
         logo_path = OUTPUT_DIR / f"{video_id}_logo_{safe_logo_name}"
@@ -1411,6 +1444,38 @@ def youtube_upload(
         except Exception as exc:
             end_credits_error = str(exc)
 
+    if short_mode_enabled:
+        shorts_output_path = OUTPUT_DIR / f"{video_id}_shorts.mp4"
+        try:
+            _prepare_video_for_shorts(
+                video_path=upload_video_path,
+                output_path=shorts_output_path,
+                max_duration_sec=59,
+            )
+            upload_video_path = shorts_output_path
+            short_processed = True
+        except Exception as exc:
+            short_error = str(exc)
+            return JSONResponse(
+                {"error": "Failed to prepare Shorts video.", "details": short_error},
+                status_code=400,
+            )
+
+    effective_title = title
+    effective_description = description
+    parsed_tags = [tag.strip() for tag in tags.split(",") if tag.strip()]
+    if short_mode_enabled:
+        if "#shorts" not in effective_title.lower():
+            effective_title = f"{effective_title} #Shorts".strip()
+        if "#shorts" not in effective_description.lower():
+            effective_description = (
+                f"{effective_description}\n\n#Shorts".strip()
+                if effective_description.strip()
+                else "#Shorts"
+            )
+        if not any(t.lower() in {"shorts", "#shorts"} for t in parsed_tags):
+            parsed_tags.append("Shorts")
+
     rfc3339_publish_at = _parse_publish_at(publish_at)
     if rfc3339_publish_at:
         status_dict: dict[str, str] = {
@@ -1425,9 +1490,9 @@ def youtube_upload(
 
     request_body = {
         "snippet": {
-            "title": title,
-            "description": description,
-            "tags": [tag.strip() for tag in tags.split(",") if tag.strip()],
+            "title": effective_title,
+            "description": effective_description,
+            "tags": parsed_tags,
             "categoryId": "22",
         },
         "status": status_dict,
@@ -1495,6 +1560,9 @@ def youtube_upload(
         "logo_error": logo_error,
         "end_credits_applied": end_credits_applied,
         "end_credits_error": end_credits_error,
+        "short_mode_enabled": short_mode_enabled,
+        "short_processed": short_processed,
+        "short_error": short_error,
     }
     if rfc3339_publish_at:
         payload["scheduled_publish_at"] = rfc3339_publish_at

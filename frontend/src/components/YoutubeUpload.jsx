@@ -2,12 +2,15 @@ import { useState } from "react";
 import { motion } from "framer-motion";
 import {
 	AlertCircle,
+	CalendarClock,
 	CheckCircle2,
 	ExternalLink,
 	Eye,
 	FileText,
+	Film,
 	ImagePlus,
 	Loader2,
+	ShieldCheck,
 	Tags,
 	Type,
 	Upload,
@@ -21,6 +24,7 @@ export default function YoutubeUpload() {
 		tags: "",
 		visibility: "public",
 		publishAt: "",
+		uploadAsShort: false,
 		videoFile: null,
 		thumbnail: null,
 		logoFile: null,
@@ -42,10 +46,14 @@ export default function YoutubeUpload() {
 	const [logoStatus, setLogoStatus] = useState("");
 	const [endCreditsStatus, setEndCreditsStatus] = useState("");
 	const [scheduleStatus, setScheduleStatus] = useState("");
+	const [shortsStatus, setShortsStatus] = useState("");
 
 	const handleInputChange = (e) => {
-		const { name, value } = e.target;
-		setFormData((prev) => ({ ...prev, [name]: value }));
+		const { name, value, type, checked } = e.target;
+		setFormData((prev) => ({
+			...prev,
+			[name]: type === "checkbox" ? checked : value,
+		}));
 	};
 
 	const generateAutoThumbnailPreview = (file) =>
@@ -182,12 +190,16 @@ export default function YoutubeUpload() {
 		setLogoStatus("");
 		setEndCreditsStatus("");
 		setScheduleStatus("");
+		setShortsStatus("");
 		try {
 			const payload = new FormData();
 			payload.append("title", formData.title);
 			payload.append("description", formData.description);
 			payload.append("tags", formData.tags);
 			payload.append("visibility", formData.visibility);
+			if (formData.uploadAsShort) {
+				payload.append("upload_as_short", "true");
+			}
 			if ((formData.publishAt || "").trim()) {
 				const parsed = new Date(formData.publishAt);
 				payload.append(
@@ -241,6 +253,12 @@ export default function YoutubeUpload() {
 				scheduleLabel = Number.isNaN(scheduled.getTime())
 					? `Scheduled publish: ${data.scheduled_publish_at} (UTC)`
 					: `Scheduled publish: ${scheduled.toLocaleString()} (local time)`;
+			}
+			if (data.short_mode_enabled) {
+				const shortText = data.short_processed
+					? "Shorts: Processed to vertical 9:16 and max 59s"
+					: "Shorts: Enabled";
+				setShortsStatus(shortText);
 			}
 			if (data.thumbnail_source === "manual") {
 				sourceStatus = "Thumbnail: Manual thumbnail applied";
@@ -423,174 +441,235 @@ export default function YoutubeUpload() {
 								</select>
 							</div>
 
-							<div className="md:col-span-2">
-								<label className="text-sm font-semibold text-slate-200 mb-2 block">
-									Schedule Publish (Optional)
-								</label>
-								<input
-									type="datetime-local"
-									name="publishAt"
-									value={formData.publishAt}
-									onChange={handleInputChange}
-									className="w-full px-4 py-3 bg-slate-800/80 border border-slate-700 rounded-xl text-white focus:outline-none focus:ring-2 focus:ring-purple-500/70"
-								/>
-								<p className="text-xs text-slate-500 mt-1">
-									When set, video uploads as private and auto-publishes at this time.
-								</p>
-							</div>
 						</div>
 
-						<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-							<div className="rounded-xl border border-slate-700 bg-slate-900/60 p-4">
-								<p className="text-sm font-semibold text-slate-200">
-									Auto Thumbnail (first frame)
-								</p>
-								<p className="text-xs text-slate-500 mt-1">
-									Used when manual thumbnail is not uploaded.
-								</p>
-								<div className="mt-3 rounded-lg overflow-hidden border border-slate-700 bg-slate-800/60 h-28 flex items-center justify-center">
-									{autoThumbnailPreview ? (
-										<img
-											src={autoThumbnailPreview}
-											alt="Auto thumbnail preview"
-											className="w-full h-full object-cover"
+						<details className="rounded-xl border border-slate-700 bg-slate-900/60 p-4">
+							<summary className="cursor-pointer select-none text-sm font-semibold text-slate-200 flex items-center gap-2 w-full">
+								<CalendarClock className="w-4 h-4 text-cyan-300" />
+								Publishing Options (Optional)
+							</summary>
+							<div className="mt-3 space-y-4">
+								<div>
+									<label className="text-sm font-semibold text-slate-200 mb-2 block">
+										Schedule Publish
+									</label>
+									<input
+										type="datetime-local"
+										name="publishAt"
+										value={formData.publishAt}
+										onChange={handleInputChange}
+										className="w-full px-4 py-3 bg-slate-800/80 border border-slate-700 rounded-xl text-white focus:outline-none focus:ring-2 focus:ring-purple-500/70"
+									/>
+									<p className="text-xs text-slate-500 mt-1">
+										When set, video uploads as private and auto-publishes at this time.
+									</p>
+								</div>
+								<div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-xl border border-slate-700 bg-slate-900/60 p-4">
+									<div>
+										<p className="text-sm font-semibold text-slate-200 inline-flex items-center gap-2">
+											<Film className="w-4 h-4 text-cyan-300" />
+											Upload as YouTube Shorts
+										</p>
+										<p className="text-xs text-slate-500 mt-1">
+											Converts to vertical 9:16 and trims to max 59 seconds.
+										</p>
+									</div>
+									<button
+										type="button"
+										onClick={() =>
+											setFormData((prev) => ({
+												...prev,
+												uploadAsShort: !prev.uploadAsShort,
+											}))
+										}
+										className={`relative inline-flex h-9 w-24 items-center rounded-full border px-2 transition ${
+											formData.uploadAsShort
+												? "border-cyan-400/60 bg-cyan-500/20"
+												: "border-slate-600 bg-slate-800/80"
+										}`}
+										aria-pressed={formData.uploadAsShort}
+									>
+										<span
+											className={`absolute left-1 top-1 h-7 w-7 rounded-full shadow-sm transition-transform ${
+												formData.uploadAsShort
+													? "translate-x-14 bg-cyan-300"
+													: "translate-x-0 bg-slate-300"
+											}`}
 										/>
-									) : (
-										<span className="text-xs text-slate-500">
-											Select a video to preview
+										<span
+											className={`w-full text-[11px] font-semibold tracking-wide ${
+												formData.uploadAsShort
+													? "pr-7 text-cyan-100 text-right"
+													: "pl-7 text-slate-200 text-left"
+											}`}
+										>
+											{formData.uploadAsShort ? "ON" : "OFF"}
 										</span>
-									)}
+									</button>
 								</div>
 							</div>
+						</details>
 
-							<div>
-								<label className="text-sm font-semibold text-slate-200 mb-2 flex items-center gap-2">
-									<ImagePlus className="w-4 h-4 text-amber-400" />
-									Manual Thumbnail (Optional)
-								</label>
-								<input
-									type="file"
-									accept="image/*"
-									onChange={handleThumbnailChange}
-									className="hidden"
-									id="thumbnail-input"
-								/>
-								<label
-									htmlFor="thumbnail-input"
-									className="rounded-xl border border-dashed border-slate-700 bg-slate-900/60 min-h-28 px-5 py-5 flex flex-col items-center justify-center text-center cursor-pointer hover:border-purple-500/60 transition"
-								>
-									<div className="w-10 h-10 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center mb-2">
-										<ImagePlus className="w-5 h-5 text-purple-400" />
-									</div>
-									<p className="text-sm font-semibold text-slate-100">
-										Upload Manual Thumbnail
+						<details className="rounded-xl border border-slate-700 bg-slate-900/60 p-4">
+							<summary className="cursor-pointer select-none text-sm font-semibold text-slate-200 flex items-center gap-2 w-full">
+								<ImagePlus className="w-4 h-4 text-amber-300" />
+								Thumbnail (Optional)
+							</summary>
+							<div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-4">
+								<div className="rounded-xl border border-slate-700 bg-slate-900/60 p-4">
+									<p className="text-sm font-semibold text-slate-200">
+										Auto Thumbnail (first frame)
 									</p>
-									<p className="text-xs text-slate-500 mt-1">JPG, PNG</p>
-									<div className="flex items-center gap-2 text-slate-500 text-xs mt-2">
-										<Upload className="w-3.5 h-3.5" />
-										Click to browse
-									</div>
-
-									{manualThumbnailPreview ? (
-										<div className="mt-3 rounded-lg overflow-hidden border border-slate-600">
+									<p className="text-xs text-slate-500 mt-1">
+										Used when manual thumbnail is not uploaded.
+									</p>
+									<div className="mt-3 rounded-lg overflow-hidden border border-slate-700 bg-slate-800/60 h-28 flex items-center justify-center">
+										{autoThumbnailPreview ? (
 											<img
-												src={manualThumbnailPreview}
-												alt="Manual thumbnail preview"
-												className="w-36 h-20 object-cover"
+												src={autoThumbnailPreview}
+												alt="Auto thumbnail preview"
+												className="w-full h-full object-cover"
 											/>
-										</div>
-									) : null}
-								</label>
-							</div>
-						</div>
-
-						<div className="rounded-xl border border-slate-700 bg-slate-900/60 p-4">
-							<p className="text-sm font-semibold text-slate-200">Logo Overlay (Optional)</p>
-							<p className="text-xs text-slate-500 mt-1">
-								Burn your logo onto the video before YouTube upload.
-							</p>
-							<div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
+										) : (
+											<span className="text-xs text-slate-500">
+												Select a video to preview
+											</span>
+										)}
+									</div>
+								</div>
 								<div>
-									<label className="text-xs text-slate-400 mb-1 block">Logo File</label>
+									<label className="text-sm font-semibold text-slate-200 mb-2 flex items-center gap-2">
+										<ImagePlus className="w-4 h-4 text-amber-400" />
+										Manual Thumbnail (Optional)
+									</label>
 									<input
 										type="file"
-										accept="image/png,image/jpeg,image/webp"
-										onChange={handleLogoChange}
-										className="w-full px-3 py-2 bg-slate-800/80 border border-slate-700 rounded-lg text-white file:mr-3 file:rounded-md file:border-0 file:bg-slate-700 file:px-3 file:py-1 file:text-slate-100"
+										accept="image/*"
+										onChange={handleThumbnailChange}
+										className="hidden"
+										id="thumbnail-input"
 									/>
-									{formData.logoFile ? (
-										<p className="text-[11px] text-slate-400 mt-1 truncate">
-											{formData.logoFile.name}
-										</p>
-									) : null}
-								</div>
-								<div>
-									<label className="text-xs text-slate-400 mb-1 block">Position</label>
-									<select
-										name="logoPosition"
-										value={formData.logoPosition}
-										onChange={handleInputChange}
-										className="w-full px-3 py-2 bg-slate-800/80 border border-slate-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500/70"
+									<label
+										htmlFor="thumbnail-input"
+										className="rounded-xl border border-dashed border-slate-700 bg-slate-900/60 min-h-28 px-5 py-5 flex flex-col items-center justify-center text-center cursor-pointer hover:border-purple-500/60 transition"
 									>
-										<option value="top-right">Top Right</option>
-										<option value="top-left">Top Left</option>
-										<option value="bottom-right">Bottom Right</option>
-										<option value="bottom-left">Bottom Left</option>
-										<option value="center">Center</option>
-									</select>
-								</div>
-								<div>
-									<label className="text-xs text-slate-400 mb-1 block">Size (%)</label>
-									<input
-										type="number"
-										name="logoScalePercent"
-										min="5"
-										max="40"
-										value={formData.logoScalePercent}
-										onChange={handleInputChange}
-										className="w-full px-3 py-2 bg-slate-800/80 border border-slate-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500/70"
-									/>
+										<div className="w-10 h-10 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center mb-2">
+											<ImagePlus className="w-5 h-5 text-purple-400" />
+										</div>
+										<p className="text-sm font-semibold text-slate-100">
+											Upload Manual Thumbnail
+										</p>
+										<p className="text-xs text-slate-500 mt-1">JPG, PNG</p>
+										<div className="flex items-center gap-2 text-slate-500 text-xs mt-2">
+											<Upload className="w-3.5 h-3.5" />
+											Click to browse
+										</div>
+										{manualThumbnailPreview ? (
+											<div className="mt-3 rounded-lg overflow-hidden border border-slate-600">
+												<img
+													src={manualThumbnailPreview}
+													alt="Manual thumbnail preview"
+													className="w-36 h-20 object-cover"
+												/>
+											</div>
+										) : null}
+									</label>
 								</div>
 							</div>
-						</div>
+						</details>
 
-						<div className="rounded-xl border border-slate-700 bg-slate-900/60 p-4">
-							<p className="text-sm font-semibold text-slate-200">
-								End Credits (Optional)
-							</p>
-							<p className="text-xs text-slate-500 mt-1">
-								Add a closing message in the last seconds of the video.
-							</p>
-							<div className="grid grid-cols-1 md:grid-cols-4 gap-3 mt-3">
-								<div className="md:col-span-3">
-									<label className="text-xs text-slate-400 mb-1 block">
-										Credits Text
-									</label>
-									<textarea
-										name="endCreditsText"
-										value={formData.endCreditsText}
-										onChange={handleInputChange}
-										placeholder={"Checkout this video\\nSubscribe for more"}
-										rows="2"
-										className="w-full px-3 py-2 bg-slate-800/80 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500/70 resize-none"
-									/>
-								</div>
-								<div>
-									<label className="text-xs text-slate-400 mb-1 block">
-										Duration (sec)
-									</label>
-									<input
-										type="number"
-										name="endCreditsDurationSec"
-										min="2"
-										max="30"
-										value={formData.endCreditsDurationSec}
-										onChange={handleInputChange}
-										className="w-full px-3 py-2 bg-slate-800/80 border border-slate-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500/70"
-									/>
+						<details className="rounded-xl border border-slate-700 bg-slate-900/60 p-4">
+							<summary className="cursor-pointer select-none text-sm font-semibold text-slate-200 flex items-center gap-2 w-full">
+								<ShieldCheck className="w-4 h-4 text-emerald-300" />
+								Logo Overlay (Optional)
+							</summary>
+							<div className="mt-3 rounded-xl border border-slate-700 bg-slate-900/60 p-4">
+								<div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+									<div>
+										<label className="text-xs text-slate-400 mb-1 block">Logo File</label>
+										<input
+											type="file"
+											accept="image/png,image/jpeg,image/webp"
+											onChange={handleLogoChange}
+											className="w-full px-3 py-2 bg-slate-800/80 border border-slate-700 rounded-lg text-white file:mr-3 file:rounded-md file:border-0 file:bg-slate-700 file:px-3 file:py-1 file:text-slate-100"
+										/>
+										{formData.logoFile ? (
+											<p className="text-[11px] text-slate-400 mt-1 truncate">
+												{formData.logoFile.name}
+											</p>
+										) : null}
+									</div>
+									<div>
+										<label className="text-xs text-slate-400 mb-1 block">Position</label>
+										<select
+											name="logoPosition"
+											value={formData.logoPosition}
+											onChange={handleInputChange}
+											className="w-full px-3 py-2 bg-slate-800/80 border border-slate-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500/70"
+										>
+											<option value="top-right">Top Right</option>
+											<option value="top-left">Top Left</option>
+											<option value="bottom-right">Bottom Right</option>
+											<option value="bottom-left">Bottom Left</option>
+											<option value="center">Center</option>
+										</select>
+									</div>
+									<div>
+										<label className="text-xs text-slate-400 mb-1 block">Size (%)</label>
+										<input
+											type="number"
+											name="logoScalePercent"
+											min="5"
+											max="40"
+											value={formData.logoScalePercent}
+											onChange={handleInputChange}
+											className="w-full px-3 py-2 bg-slate-800/80 border border-slate-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500/70"
+										/>
+									</div>
 								</div>
 							</div>
-						</div>
+						</details>
+
+						<details className="rounded-xl border border-slate-700 bg-slate-900/60 p-4">
+							<summary className="cursor-pointer select-none text-sm font-semibold text-slate-200 flex items-center gap-2 w-full">
+								<FileText className="w-4 h-4 text-pink-300" />
+								End Credits (Optional)
+							</summary>
+							<div className="mt-3 rounded-xl border border-slate-700 bg-slate-900/60 p-4">
+								<p className="text-xs text-slate-500 mb-3">
+									Add a closing message in the last seconds of the video.
+								</p>
+								<div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+									<div className="md:col-span-3">
+										<label className="text-xs text-slate-400 mb-1 block">
+											Credits Text
+										</label>
+										<textarea
+											name="endCreditsText"
+											value={formData.endCreditsText}
+											onChange={handleInputChange}
+											placeholder={"Checkout this video\\nSubscribe for more"}
+											rows="2"
+											className="w-full px-3 py-2 bg-slate-800/80 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500/70 resize-none"
+										/>
+									</div>
+									<div>
+										<label className="text-xs text-slate-400 mb-1 block">
+											Duration (sec)
+										</label>
+										<input
+											type="number"
+											name="endCreditsDurationSec"
+											min="2"
+											max="30"
+											value={formData.endCreditsDurationSec}
+											onChange={handleInputChange}
+											className="w-full px-3 py-2 bg-slate-800/80 border border-slate-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500/70"
+										/>
+									</div>
+								</div>
+							</div>
+						</details>
 
 						{status === "success" ? (
 							<div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-emerald-200 text-sm">
@@ -609,6 +688,9 @@ export default function YoutubeUpload() {
 										) : null}
 										{scheduleStatus ? (
 											<p className="text-emerald-100/90">{scheduleStatus}</p>
+										) : null}
+										{shortsStatus ? (
+											<p className="text-emerald-100/90">{shortsStatus}</p>
 										) : null}
 										{thumbnailNotice ? (
 											<p className="text-emerald-100/75">{thumbnailNotice}</p>
@@ -635,7 +717,7 @@ export default function YoutubeUpload() {
 							</div>
 						) : null}
 
-						<div className="pt-2">
+						<div className="sticky bottom-3 z-10 pt-2">
 							<button
 								type="submit"
 								disabled={isUploading}
