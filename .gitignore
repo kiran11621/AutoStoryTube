@@ -18,6 +18,12 @@ data/uploads/
 data/outputs/
 data/credentials/
 !data/credentials/.gitkeep
+data/music/
+!data/music/.gitkeep
+data/logos/
+!data/logos/.gitkeep
+data/thumbnails/
+!data/thumbnails/.gitkeep
 data/voices/
 !data/voices/.gitkeep
 !data/voices/piper/.gitkeep
@@ -30,6 +36,7 @@ testbatch.xlsx
 test_batch*.xlsx
 data/scripts/story*.txt
 data/video_library/sample_video.mp4
+data/video_library/sample_loop.mp4
 
 # Frontend local/build artifacts
 frontend/node_modules/

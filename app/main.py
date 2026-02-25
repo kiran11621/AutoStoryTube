@@ -17,12 +17,16 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Streamin
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from openpyxl import Workbook, load_workbook
+from openpyxl.worksheet.datavalidation import DataValidation
 from google.auth.transport.requests import Request as GoogleRequest
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
+
+# Allow local OAuth redirect over HTTP during development.
+os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
@@ -32,6 +36,9 @@ CREDENTIALS_DIR = DATA_DIR / "credentials"
 VIDEO_LIBRARY_DIR = DATA_DIR / "video_library"
 VIDEO_LIBRARY_CATALOG = VIDEO_LIBRARY_DIR / "catalog.json"
 SCRIPTS_DIR = DATA_DIR / "scripts"
+MUSIC_DIR = DATA_DIR / "music"
+LOGOS_DIR = DATA_DIR / "logos"
+THUMBNAILS_DIR = DATA_DIR / "thumbnails"
 VOICES_DIR = DATA_DIR / "voices"
 PIPER_VOICES_DIR = VOICES_DIR / "piper"
 TOKEN_PATH = CREDENTIALS_DIR / "token.json"
@@ -42,6 +49,9 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 CREDENTIALS_DIR.mkdir(parents=True, exist_ok=True)
 VIDEO_LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
 SCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
+MUSIC_DIR.mkdir(parents=True, exist_ok=True)
+LOGOS_DIR.mkdir(parents=True, exist_ok=True)
+THUMBNAILS_DIR.mkdir(parents=True, exist_ok=True)
 PIPER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
 
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
@@ -52,6 +62,72 @@ VOICE_STYLE_PRESETS = {
     "energetic": {"rate_adjust": 15},
     "calm": {"rate_adjust": -15},
     "dramatic": {"rate_adjust": -8},
+}
+SUBTITLE_STYLE_PRESETS = {
+    "classic": {
+        "text_color": "#FFFFFF",
+        "bg_color": "#000000",
+        "bold": False,
+        "italic": False,
+        "alignment": 2,
+        "font_size": 48,
+        "font_name": "Arial",
+        "border_style": 3,
+        "outline": 1,
+        "shadow": 0,
+        "margin_v": 80,
+    },
+    "viral": {
+        "text_color": "#FFFFFF",
+        "bg_color": "#FF4D00",
+        "bold": True,
+        "italic": False,
+        "alignment": 2,
+        "font_size": 56,
+        "font_name": "Arial",
+        "border_style": 3,
+        "outline": 1,
+        "shadow": 0,
+        "margin_v": 82,
+    },
+    "reels": {
+        "text_color": "#F5F7FA",
+        "bg_color": "#1F2937",
+        "bold": True,
+        "italic": False,
+        "alignment": 2,
+        "font_size": 50,
+        "font_name": "Arial",
+        "border_style": 3,
+        "outline": 1,
+        "shadow": 0,
+        "margin_v": 84,
+    },
+    "cinematic": {
+        "text_color": "#F7E7C6",
+        "bg_color": "#101010",
+        "bold": False,
+        "italic": False,
+        "alignment": 2,
+        "font_size": 46,
+        "font_name": "Arial",
+        "border_style": 3,
+        "outline": 1,
+        "shadow": 0,
+        "margin_v": 96,
+    },
+}
+OUTPUT_MODE_PRESETS = {
+    "youtube": {"width": 1920, "height": 1080},
+    "shorts": {"width": 1080, "height": 1920},
+    "reels": {"width": 1080, "height": 1920},
+    "square": {"width": 1080, "height": 1080},
+}
+SUBTITLE_ASS_TEMPLATES = {
+    "fade": "fade",
+    "bold_center": "bold_center",
+    "karaoke_word_by_word": "karaoke_word_by_word",
+    "bounce_fade": "bounce_fade",
 }
 VOICE_MODEL_MATRIX = {
     "professional": {
@@ -147,6 +223,81 @@ def _voice_profile(voice_style: str, rate: int) -> dict[str, float]:
     return profile
 
 
+def _resolve_subtitle_style_preset(preset_name: str | None) -> dict:
+    preset_key = str(preset_name or "classic").strip().lower()
+    if preset_key == "default":
+        preset_key = "classic"
+    preset = SUBTITLE_STYLE_PRESETS.get(preset_key)
+    if not preset:
+        preset = SUBTITLE_STYLE_PRESETS["classic"]
+    return preset.copy()
+
+
+def _resolve_subtitle_template(template_name: str | None) -> str:
+    template_key = str(template_name or "fade").strip().lower()
+    aliases = {
+        "default": "fade",
+        "fade_only": "fade",
+        "boldcenter": "bold_center",
+        "bold_center_captions": "bold_center",
+        "bold center": "bold_center",
+        "center bold": "bold_center",
+        "karaoke": "karaoke_word_by_word",
+        "word_by_word": "karaoke_word_by_word",
+        "word by word": "karaoke_word_by_word",
+        "karaoke_word": "karaoke_word_by_word",
+        "bounce": "bounce_fade",
+        "bouncefade": "bounce_fade",
+        "bounce/fade": "bounce_fade",
+        "bounce fade": "bounce_fade",
+    }
+    template_key = aliases.get(template_key, template_key)
+    if template_key not in SUBTITLE_ASS_TEMPLATES:
+        template_key = "fade"
+    return template_key
+
+
+def _resolve_output_mode(output_mode: str | None) -> str:
+    mode = str(output_mode or "youtube").strip().lower()
+    aliases = {
+        "16:9": "youtube",
+        "landscape": "youtube",
+        "standard": "youtube",
+        "youtube_standard": "youtube",
+        "9:16": "shorts",
+        "vertical": "shorts",
+        "yt_shorts": "shorts",
+        "short": "shorts",
+        "reel": "reels",
+        "1:1": "square",
+        "instagram_square": "square",
+    }
+    mode = aliases.get(mode, mode)
+    if mode not in OUTPUT_MODE_PRESETS:
+        mode = "youtube"
+    return mode
+
+
+def _output_mode_resolution(output_mode: str | None) -> tuple[int, int]:
+    mode = _resolve_output_mode(output_mode)
+    preset = OUTPUT_MODE_PRESETS[mode]
+    return int(preset["width"]), int(preset["height"])
+
+
+def _subtitle_margin_for_mode(
+    base_margin_v: int, output_mode: str, play_res_y: int
+) -> int:
+    mode = _resolve_output_mode(output_mode)
+    scale_factor = max(0.8, play_res_y / 720.0)
+    mode_boost = {
+        "youtube": 1.00,
+        "square": 1.15,
+        "shorts": 1.40,
+        "reels": 1.40,
+    }.get(mode, 1.0)
+    return max(40, int(round(base_margin_v * scale_factor * mode_boost)))
+
+
 def _post_process_voice(audio_path: Path, profile: dict[str, float]) -> None:
     processed_path = audio_path.with_name(f"{audio_path.stem}_fx.wav")
     filters = [
@@ -174,6 +325,16 @@ app.mount("/static", StaticFiles(directory=BASE_DIR / "app" / "static"), name="s
 templates = Jinja2Templates(directory=BASE_DIR / "app" / "templates")
 
 
+@app.exception_handler(RuntimeError)
+async def runtime_error_handler(request: Request, exc: RuntimeError) -> JSONResponse:
+    return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.exception_handler(Exception)
+async def generic_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    return JSONResponse({"error": str(exc)}, status_code=500)
+
+
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request) -> HTMLResponse:
     return templates.TemplateResponse("index.html", {"request": request})
@@ -194,12 +355,14 @@ def _safe_filename(name: str) -> str:
     return re.sub(r"[^a-zA-Z0-9._-]", "_", name)
 
 
-def _generate_thumbnail_from_video(video_path: Path, thumbnail_path: Path) -> None:
+def _generate_thumbnail_from_video(
+    video_path: Path, thumbnail_path: Path, seek_seconds: float = 0.6
+) -> None:
     command = [
         "ffmpeg",
         "-y",
         "-ss",
-        "0.6",
+        f"{max(0.0, float(seek_seconds)):.2f}",
         "-i",
         str(video_path),
         "-frames:v",
@@ -273,6 +436,57 @@ def _video_duration_seconds(video_path: Path) -> float:
         return float((process.stdout or "").strip())
     except ValueError as exc:
         raise RuntimeError("Unable to parse video duration.") from exc
+
+
+def _video_dimensions(video_path: Path) -> tuple[int, int]:
+    command = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=width,height",
+        "-of",
+        "csv=p=0:s=x",
+        str(video_path),
+    ]
+    process = subprocess.run(command, capture_output=True, text=True)
+    if process.returncode != 0:
+        raise RuntimeError(f"FFprobe failed: {process.stderr}")
+    dimensions = (process.stdout or "").strip().split("x")
+    if len(dimensions) != 2:
+        raise RuntimeError("Unable to parse video dimensions.")
+    try:
+        return int(dimensions[0]), int(dimensions[1])
+    except ValueError as exc:
+        raise RuntimeError("Unable to parse video dimensions.") from exc
+
+
+def _build_smart_framing_filter(video_path: Path, output_mode: str) -> str:
+    target_w, target_h = _output_mode_resolution(output_mode)
+    source_w, source_h = _video_dimensions(video_path)
+    if source_w <= 0 or source_h <= 0:
+        return f"scale={target_w}:{target_h}:flags=lanczos,setsar=1"
+
+    source_aspect = source_w / source_h
+    target_aspect = target_w / target_h
+
+    if abs(source_aspect - target_aspect) < 0.01:
+        return f"scale={target_w}:{target_h}:flags=lanczos,setsar=1"
+
+    if source_aspect > target_aspect:
+        # Source is wider than target frame: scale to target height and center-crop.
+        return (
+            f"scale=-2:{target_h}:flags=lanczos,"
+            f"crop={target_w}:{target_h}:(iw-{target_w})/2:(ih-{target_h})/2,setsar=1"
+        )
+
+    # Source is narrower/taller than target frame: scale to target height and pad.
+    return (
+        f"scale=-2:{target_h}:flags=lanczos,"
+        f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2:black,setsar=1"
+    )
 
 
 def _ffmpeg_drawtext_escape(text: str) -> str:
@@ -564,19 +778,24 @@ def _build_ass_style_line(
     bg_color: str,
     bold: bool,
     italic: bool,
-    alignment: int = 2,  
+    alignment: int = 2,
     font_size: int = 48,
+    font_name: str = "Arial",
+    border_style: int = 3,
+    outline: int = 1,
+    shadow: int = 0,
+    margin_v: int = 80,
 ) -> str:
     primary = _hex_to_ass_color(text_color, alpha="00")
     back = _hex_to_ass_color(bg_color, alpha="00")
-    
+
     bold_value = -1 if bold else 0
     italic_value = -1 if italic else 0
- 
+
     return (
-        "Style: Default,Arial,"
+        f"Style: Default,{font_name},"
         f"{font_size},{primary},&H000000FF,{back},{back},"
-        f"{bold_value},{italic_value},0,0,100,100,0,0,3,1,0,{alignment},60,60,80,1"
+        f"{bold_value},{italic_value},0,0,100,100,0,0,{border_style},{outline},{shadow},{alignment},60,60,{margin_v},1"
     )
 
 
@@ -588,30 +807,52 @@ def _build_ass_subtitles(
     bg_color: str,
     bold: bool,
     italic: bool,
-    alignment: int = 2,  
+    alignment: int = 2,
     font_size: int = 48,
+    font_name: str = "Arial",
+    border_style: int = 3,
+    outline: int = 1,
+    shadow: int = 0,
+    margin_v: int = 80,
+    play_res_x: int = 1280,
+    play_res_y: int = 720,
+    subtitle_template: str = "fade",
 ) -> None:
+    subtitle_template = _resolve_subtitle_template(subtitle_template)
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     if not lines:
         lines = [text.strip()]
 
     word_counts = [max(1, len(line.split())) for line in lines]
     total_words = sum(word_counts)
-    
+
+    if subtitle_template == "bold_center":
+        alignment = 5
+        bold = True
+        font_size = max(font_size, 54)
+        outline = max(outline, 2)
+        shadow = 0
+        margin_v = max(42, int(margin_v * 0.65))
+
     style_line = _build_ass_style_line(
-        text_color, 
-        bg_color, 
-        bold, 
-        italic, 
-        alignment=alignment, 
-        font_size=font_size
+        text_color,
+        bg_color,
+        bold,
+        italic,
+        alignment=alignment,
+        font_size=font_size,
+        font_name=font_name,
+        border_style=border_style,
+        outline=outline,
+        shadow=shadow,
+        margin_v=margin_v,
     )
 
     header = f"""[Script Info]
 ScriptType: v4.00+
 Collisions: Normal
-PlayResX: 1280
-PlayResY: 720
+PlayResX: {play_res_x}
+PlayResY: {play_res_y}
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
@@ -629,8 +870,34 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         start_stamp = _format_ass_time(start_time)
         end_stamp = _format_ass_time(end_time)
         escaped = line.replace("{", "\\{").replace("}", "\\}")
+        dialogue_text = f"{{\\fad(200,200)}}{escaped}"
+        if subtitle_template == "bold_center":
+            dialogue_text = f"{{\\an5\\b1\\fad(140,160)}}{escaped}"
+        elif subtitle_template == "bounce_fade":
+            dialogue_text = (
+                "{\\fad(120,220)\\t(0,120,\\fscx130\\fscy130)"
+                "\\t(120,280,\\fscx100\\fscy100)}"
+                f"{escaped}"
+            )
+        elif subtitle_template == "karaoke_word_by_word":
+            words = [w for w in line.split() if w]
+            if words:
+                total_cs = max(1, int(round(max(0.5, segment_duration) * 100)))
+                per_word = max(1, total_cs // len(words))
+                parts = []
+                consumed = 0
+                for idx, word in enumerate(words):
+                    if idx == len(words) - 1:
+                        word_cs = max(1, total_cs - consumed)
+                    else:
+                        word_cs = per_word
+                        consumed += word_cs
+                    safe_word = word.replace("{", "\\{").replace("}", "\\}")
+                    separator = " " if idx < len(words) - 1 else ""
+                    parts.append(f"{{\\k{word_cs}}}{safe_word}{separator}")
+                dialogue_text = "".join(parts)
         events.append(
-            f"Dialogue: 0,{start_stamp},{end_stamp},Default,,0,0,0,,{{\\fad(200,200)}}{escaped}"
+            f"Dialogue: 0,{start_stamp},{end_stamp},Default,,0,0,0,,{dialogue_text}"
         )
         start_time = end_time
 
@@ -672,7 +939,85 @@ def _to_bool(value: object, default: bool = False) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
-def _batch_alignment_value(row: dict) -> int:
+def _resolve_bgm_volume(value: object, default: float = 0.18) -> float:
+    if value is None or str(value).strip() == "":
+        return default
+    try:
+        parsed = float(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+    return max(0.0, min(1.0, parsed))
+
+
+def _resolve_batch_bgm_path(row: dict) -> Path | None:
+    reference = str(
+        row.get("bgm_file")
+        or row.get("bgm_track")
+        or row.get("background_music")
+        or row.get("music_file")
+        or ""
+    ).strip()
+    if not reference:
+        return None
+
+    candidate = Path(reference)
+    if candidate.exists() and candidate.is_file():
+        return candidate
+
+    safe_name = _safe_filename(reference)
+    if not safe_name:
+        return None
+    local_candidate = MUSIC_DIR / safe_name
+    if local_candidate.exists() and local_candidate.is_file():
+        return local_candidate
+    return None
+
+
+def _resolve_batch_asset_path(
+    row: dict, keys: tuple[str, ...], default_dir: Path
+) -> Path | None:
+    for key in keys:
+        value = row.get(key)
+        if value is None or str(value).strip() == "":
+            continue
+        reference = str(value).strip()
+        candidate = Path(reference)
+        if candidate.exists() and candidate.is_file():
+            return candidate
+        safe_name = _safe_filename(reference)
+        if not safe_name:
+            continue
+        local_candidate = default_dir / safe_name
+        if local_candidate.exists() and local_candidate.is_file():
+            return local_candidate
+    return None
+
+
+def _build_bgm_audio_filter_chain(
+    *,
+    bgm_volume: float,
+    bgm_ducking: bool,
+    voice_stream_label: str = "1:a",
+    bgm_stream_label: str = "2:a",
+) -> str:
+    volume = max(0.0, min(1.0, bgm_volume))
+    # Boost narration without reducing user-selected BGM level.
+    if bgm_ducking:
+        return (
+            f"[{voice_stream_label}]volume=1.30[voice];"
+            f"[{bgm_stream_label}]volume={volume:.2f}[bgm];"
+            "[bgm][voice]sidechaincompress="
+            "threshold=0.035:ratio=10:attack=12:release=220[ducked];"
+            "[voice][ducked]amix=inputs=2:weights='1.0 1.0':duration=first:dropout_transition=2[aout]"
+        )
+    return (
+        f"[{voice_stream_label}]volume=1.30[voice];"
+        f"[{bgm_stream_label}]volume={volume:.2f}[bgm];"
+        "[voice][bgm]amix=inputs=2:weights='1.0 1.0':duration=first:dropout_transition=2[aout]"
+    )
+
+
+def _batch_alignment_value(row: dict, default_alignment: int = 2) -> int:
     # Supports either numeric "alignment" (Create Video style) or textual "placement".
     raw_alignment = row.get("alignment") or row.get("subtitle_alignment")
     if raw_alignment is not None and str(raw_alignment).strip() != "":
@@ -682,9 +1027,12 @@ def _batch_alignment_value(row: dict) -> int:
                 return alignment
         except (TypeError, ValueError):
             pass
-    return _placement_to_ass_alignment(
+    raw_placement = (
         row.get("placement") or row.get("subtitle_placement") or row.get("subtitle_pl")
     )
+    if raw_placement is not None and str(raw_placement).strip():
+        return _placement_to_ass_alignment(raw_placement)
+    return default_alignment
 
 
 def _build_ass_subtitles_styled(
@@ -864,55 +1212,186 @@ def _process_one_batch_row(row: dict) -> dict:
 
     duration = _wav_duration_seconds(voice_path)
     subtitles_path = OUTPUT_DIR / f"{job_id}.ass"
+    subtitle_preset = str(
+        row.get("subtitle_preset")
+        or row.get("subtitle_style")
+        or "classic"
+    ).strip().lower()
+    subtitle_template = _resolve_subtitle_template(
+        row.get("subtitle_template")
+        or row.get("subtitle_animation")
+        or row.get("ass_template")
+        or "fade"
+    )
+    output_mode = _resolve_output_mode(
+        row.get("output_mode") or row.get("aspect_mode") or row.get("format_mode")
+    )
+    target_w, target_h = _output_mode_resolution(output_mode)
+    preset_style = _resolve_subtitle_style_preset(subtitle_preset)
     text_color = str(
         row.get("text_color")
         or row.get("subtitle_text_color")
         or row.get("subtitle_tc")
         or row.get("font_color")
-        or "#ffffff"
+        or preset_style["text_color"]
     ).strip()
     bg_color = str(
         row.get("bg_color")
         or row.get("subtitle_bg_color")
         or row.get("subtitle_bg")
         or row.get("font_background")
-        or "#000000"
+        or preset_style["bg_color"]
     ).strip()
+    bold_value = _to_bool(
+        row.get("bold")
+        if row.get("bold") is not None
+        else row.get("subtitle_bold", row.get("subtitle_b")),
+        default=bool(preset_style["bold"]),
+    )
+    italic_value = _to_bool(
+        row.get("italic")
+        if row.get("italic") is not None
+        else row.get("subtitle_italic", row.get("subtitle_it")),
+        default=bool(preset_style["italic"]),
+    )
+    alignment_value = _batch_alignment_value(
+        row, default_alignment=int(preset_style["alignment"])
+    )
+    margin_v_value = _subtitle_margin_for_mode(
+        int(preset_style["margin_v"]), output_mode, target_h
+    )
     _build_ass_subtitles(
         text,
         duration,
         subtitles_path,
         text_color=text_color,
         bg_color=bg_color,
-        bold=_to_bool(row.get("bold") if row.get("bold") is not None else row.get("subtitle_bold", row.get("subtitle_b")), default=False),
-        italic=_to_bool(row.get("italic") if row.get("italic") is not None else row.get("subtitle_italic", row.get("subtitle_it")), default=False),
-        alignment=_batch_alignment_value(row),
-        font_size=48,
+        bold=bold_value,
+        italic=italic_value,
+        alignment=alignment_value,
+        font_size=int(preset_style["font_size"]),
+        font_name=str(preset_style["font_name"]),
+        border_style=int(preset_style["border_style"]),
+        outline=int(preset_style["outline"]),
+        shadow=int(preset_style["shadow"]),
+        margin_v=margin_v_value,
+        play_res_x=target_w,
+        play_res_y=target_h,
+        subtitle_template=subtitle_template,
     )
     output_path = OUTPUT_DIR / f"{job_id}_final.mp4"
+    frame_filter = _build_smart_framing_filter(video_path, output_mode)
     subtitles_filter = (
         f"subtitles=filename='{_ffmpeg_subtitles_path(subtitles_path)}':charenc=UTF-8"
     )
-    ffmpeg_command = [
-        "ffmpeg",
-        "-y",
-        "-stream_loop",
-        "-1",
-        "-i",
-        str(video_path),
-        "-i",
-        str(voice_path),
-        "-t",
-        f"{duration:.2f}",
-        "-vf",
-        subtitles_filter,
-        "-c:v",
-        "libx264",
-        "-c:a",
-        "aac",
-        str(output_path),
-    ]
-    _run_ffmpeg(ffmpeg_command)
+    video_filter_chain = f"{frame_filter},{subtitles_filter}"
+    bgm_path = _resolve_batch_bgm_path(row)
+    bgm_volume = _resolve_bgm_volume(row.get("bgm_volume") or row.get("music_volume"))
+    bgm_ducking = _to_bool(row.get("bgm_ducking"), default=True)
+    if bgm_path:
+        audio_filter_chain = _build_bgm_audio_filter_chain(
+            bgm_volume=bgm_volume,
+            bgm_ducking=bgm_ducking,
+            voice_stream_label="1:a",
+            bgm_stream_label="2:a",
+        )
+        ffmpeg_command = [
+            "ffmpeg",
+            "-y",
+            "-stream_loop",
+            "-1",
+            "-i",
+            str(video_path),
+            "-i",
+            str(voice_path),
+            "-stream_loop",
+            "-1",
+            "-i",
+            str(bgm_path),
+            "-t",
+            f"{duration:.2f}",
+            "-vf",
+            video_filter_chain,
+            "-filter_complex",
+            audio_filter_chain,
+            "-map",
+            "0:v:0",
+            "-map",
+            "[aout]",
+            "-c:v",
+            "libx264",
+            "-c:a",
+            "aac",
+            str(output_path),
+        ]
+    else:
+        ffmpeg_command = [
+            "ffmpeg",
+            "-y",
+            "-stream_loop",
+            "-1",
+            "-i",
+            str(video_path),
+            "-i",
+            str(voice_path),
+            "-t",
+            f"{duration:.2f}",
+            "-vf",
+            video_filter_chain,
+            "-c:v",
+            "libx264",
+            "-c:a",
+            "aac",
+            str(output_path),
+        ]
+    try:
+        _run_ffmpeg(ffmpeg_command)
+    except RuntimeError as primary_error:
+        # Some FFmpeg builds do not include sidechaincompress. Retry without ducking.
+        if bgm_path and bgm_ducking:
+            fallback_audio_filter_chain = _build_bgm_audio_filter_chain(
+                bgm_volume=bgm_volume,
+                bgm_ducking=False,
+                voice_stream_label="1:a",
+                bgm_stream_label="2:a",
+            )
+            fallback_command = [
+                "ffmpeg",
+                "-y",
+                "-stream_loop",
+                "-1",
+                "-i",
+                str(video_path),
+                "-i",
+                str(voice_path),
+                "-stream_loop",
+                "-1",
+                "-i",
+                str(bgm_path),
+                "-t",
+                f"{duration:.2f}",
+                "-vf",
+                video_filter_chain,
+                "-filter_complex",
+                fallback_audio_filter_chain,
+                "-map",
+                "0:v:0",
+                "-map",
+                "[aout]",
+                "-c:v",
+                "libx264",
+                "-c:a",
+                "aac",
+                str(output_path),
+            ]
+            try:
+                _run_ffmpeg(fallback_command)
+                ffmpeg_command = fallback_command
+                bgm_ducking = False
+            except RuntimeError as fallback_error:
+                raise RuntimeError(str(fallback_error))
+        else:
+            raise RuntimeError(str(primary_error))
     output_video_name = row.get("output_video_name")
     if output_video_name is not None and str(output_video_name).strip():
         video_name = str(output_video_name).strip()
@@ -934,27 +1413,56 @@ def _process_one_batch_row(row: dict) -> dict:
         "voice_style": voice_style,
         "voice_gender": voice_gender,
         "voice_model": voice_model,
+        "subtitle_preset": subtitle_preset,
+        "subtitle_template": subtitle_template,
+        "output_mode": output_mode,
+        "bgm_enabled": bool(bgm_path),
+        "bgm_ducking": bgm_ducking if bgm_path else False,
+        "bgm_volume": bgm_volume if bgm_path else 0.0,
     }
 @app.post("/api/process")
 def process_video(
     background_video: UploadFile | None = File(None),
     script_file: UploadFile | None = File(None),
+    bgm_file: UploadFile | None = File(None),
     library_code: str = Form(""),
     script_excel: UploadFile | None = File(None),
     tts_rate: int = Form(175),
-    text_color: str = Form("#ffffff"),
-    bg_color: str = Form("#000000"),
-    bold: str = Form("false"),
-    italic: str = Form("false"),
-    alignment: int = Form(2),
+    text_color: str | None = Form(None),
+    bg_color: str | None = Form(None),
+    bold: str | None = Form(None),
+    italic: str | None = Form(None),
+    alignment: int | None = Form(None),
+    subtitle_preset: str = Form("classic"),
+    subtitle_template: str = Form("fade"),
+    output_mode: str = Form("youtube"),
+    bgm_volume: str | None = Form(None),
+    bgm_ducking: str | None = Form(None),
     voice_style: str = Form("professional"),
     voice_gender: str = Form("male"),
 ) -> JSONResponse:
-    text_color = (text_color or "#ffffff").strip()
-    bg_color = (bg_color or "#000000").strip()
-    
-    is_bold = bold.lower() == "true"
-    is_italic = italic.lower() == "true"
+    preset_style = _resolve_subtitle_style_preset(subtitle_preset)
+    text_color = str(text_color or preset_style["text_color"]).strip()
+    bg_color = str(bg_color or preset_style["bg_color"]).strip()
+    is_bold = _to_bool(bold, default=bool(preset_style["bold"]))
+    is_italic = _to_bool(italic, default=bool(preset_style["italic"]))
+    alignment_value = int(preset_style["alignment"])
+    if alignment is not None:
+        try:
+            parsed_alignment = int(alignment)
+            if parsed_alignment in {1, 2, 3, 4, 5, 6, 7, 8, 9}:
+                alignment_value = parsed_alignment
+        except (TypeError, ValueError):
+            pass
+
+    subtitle_preset = str(subtitle_preset or "classic").strip().lower()
+    if subtitle_preset == "default":
+        subtitle_preset = "classic"
+    if subtitle_preset not in SUBTITLE_STYLE_PRESETS:
+        subtitle_preset = "classic"
+    subtitle_template = _resolve_subtitle_template(subtitle_template)
+    output_mode = _resolve_output_mode(output_mode)
+    target_w, target_h = _output_mode_resolution(output_mode)
     voice_style = (voice_style or "professional").strip().lower()
     if voice_style not in VOICE_STYLE_PRESETS:
         voice_style = "professional"
@@ -996,6 +1504,13 @@ def process_video(
     tts_engine, voice_model = _text_to_speech(
         text, voice_path, tts_rate, voice_style, voice_gender
     )
+    bgm_volume_value = _resolve_bgm_volume(bgm_volume, default=0.18)
+    bgm_ducking_value = _to_bool(bgm_ducking, default=True)
+    bgm_path: Path | None = None
+    if bgm_file is not None and bgm_file.filename and str(bgm_file.filename).strip():
+        bgm_path = UPLOAD_DIR / f"{job_id}_{_safe_filename(bgm_file.filename)}"
+        with bgm_path.open("wb") as bgm_buffer:
+            shutil.copyfileobj(bgm_file.file, bgm_buffer)
 
     duration = _audio_duration_seconds(voice_path)
     subtitles_path = OUTPUT_DIR / f"{job_id}.ass"
@@ -1008,36 +1523,132 @@ def process_video(
         bg_color=bg_color,
         bold=is_bold,
         italic=is_italic,
-        alignment=alignment, 
-        font_size=48,
+        alignment=alignment_value,
+        font_size=int(preset_style["font_size"]),
+        font_name=str(preset_style["font_name"]),
+        border_style=int(preset_style["border_style"]),
+        outline=int(preset_style["outline"]),
+        shadow=int(preset_style["shadow"]),
+        margin_v=_subtitle_margin_for_mode(
+            int(preset_style["margin_v"]), output_mode, target_h
+        ),
+        play_res_x=target_w,
+        play_res_y=target_h,
+        subtitle_template=subtitle_template,
     )
 
     output_path = OUTPUT_DIR / f"{job_id}_final.mp4"
 
+    frame_filter = _build_smart_framing_filter(video_path, output_mode)
     subtitles_filter = (
         f"subtitles=filename='{_ffmpeg_subtitles_path(subtitles_path)}':charenc=UTF-8"
     )
-    ffmpeg_command = [
-        "ffmpeg",
-        "-y",
-        "-stream_loop",
-        "-1",
-        "-i",
-        str(video_path),
-        "-i",
-        str(voice_path),
-        "-t",
-        f"{duration:.2f}",
-        "-vf",
-        subtitles_filter,
-        "-c:v",
-        "libx264",
-        "-c:a",
-        "aac",
-        str(output_path),
-    ]
+    video_filter_chain = f"{frame_filter},{subtitles_filter}"
+    if bgm_path:
+        audio_filter_chain = _build_bgm_audio_filter_chain(
+            bgm_volume=bgm_volume_value,
+            bgm_ducking=bgm_ducking_value,
+            voice_stream_label="1:a",
+            bgm_stream_label="2:a",
+        )
+        ffmpeg_command = [
+            "ffmpeg",
+            "-y",
+            "-stream_loop",
+            "-1",
+            "-i",
+            str(video_path),
+            "-i",
+            str(voice_path),
+            "-stream_loop",
+            "-1",
+            "-i",
+            str(bgm_path),
+            "-t",
+            f"{duration:.2f}",
+            "-vf",
+            video_filter_chain,
+            "-filter_complex",
+            audio_filter_chain,
+            "-map",
+            "0:v:0",
+            "-map",
+            "[aout]",
+            "-c:v",
+            "libx264",
+            "-c:a",
+            "aac",
+            str(output_path),
+        ]
+    else:
+        ffmpeg_command = [
+            "ffmpeg",
+            "-y",
+            "-stream_loop",
+            "-1",
+            "-i",
+            str(video_path),
+            "-i",
+            str(voice_path),
+            "-t",
+            f"{duration:.2f}",
+            "-vf",
+            video_filter_chain,
+            "-c:v",
+            "libx264",
+            "-c:a",
+            "aac",
+            str(output_path),
+        ]
 
-    _run_ffmpeg(ffmpeg_command)
+    try:
+        _run_ffmpeg(ffmpeg_command)
+    except RuntimeError as primary_error:
+        # Some FFmpeg builds do not include sidechaincompress. Retry without ducking.
+        if bgm_path and bgm_ducking_value:
+            fallback_audio_filter_chain = _build_bgm_audio_filter_chain(
+                bgm_volume=bgm_volume_value,
+                bgm_ducking=False,
+                voice_stream_label="1:a",
+                bgm_stream_label="2:a",
+            )
+            fallback_command = [
+                "ffmpeg",
+                "-y",
+                "-stream_loop",
+                "-1",
+                "-i",
+                str(video_path),
+                "-i",
+                str(voice_path),
+                "-stream_loop",
+                "-1",
+                "-i",
+                str(bgm_path),
+                "-t",
+                f"{duration:.2f}",
+                "-vf",
+                video_filter_chain,
+                "-filter_complex",
+                fallback_audio_filter_chain,
+                "-map",
+                "0:v:0",
+                "-map",
+                "[aout]",
+                "-c:v",
+                "libx264",
+                "-c:a",
+                "aac",
+                str(output_path),
+            ]
+            try:
+                _run_ffmpeg(fallback_command)
+                ffmpeg_command = fallback_command
+                bgm_ducking_value = False
+            except RuntimeError as fallback_error:
+                return JSONResponse({"error": str(fallback_error)}, status_code=500)
+        else:
+            return JSONResponse({"error": str(primary_error)}, status_code=500)
 
     return JSONResponse(
         {
@@ -1048,6 +1659,12 @@ def process_video(
             "voice_style": voice_style,
             "voice_gender": voice_gender,
             "voice_model": voice_model,
+            "subtitle_preset": subtitle_preset,
+            "subtitle_template": subtitle_template,
+            "output_mode": output_mode,
+            "bgm_enabled": bool(bgm_path),
+            "bgm_ducking": bgm_ducking_value if bgm_path else False,
+            "bgm_volume": bgm_volume_value if bgm_path else 0.0,
         }
     
     )
@@ -1079,14 +1696,27 @@ def batch_schema() -> JSONResponse:
                 {"key": "video_description", "description": "Video description (e.g. for YouTube)."},
                 {"key": "video_tags", "description": "Comma-separated tags."},
                 {"key": "publish_at", "description": "Optional YouTube schedule time. Supports ISO format; converted to UTC for YouTube."},
-                {"key": "visibility", "description": "YouTube visibility when publish_at is blank: public, private, or unlisted."},
+                {"key": "visibility", "description": "public, private, or unlisted. If set to private, video stays private even when publish_at is filled."},
+                {"key": "output_mode", "description": "youtube (16:9), shorts/reels (9:16), or square (1:1)."},
                 {"key": "voice_style", "description": "professional, casual, narrator, energetic, calm, dramatic."},
                 {"key": "voice_gender", "description": "male or female."},
                 {"key": "voice_type", "description": "Optional pyttsx3 voice id/name override."},
+                {"key": "thumbnail_mode", "description": "Optional: auto, manual, or none."},
+                {"key": "thumbnail_file", "description": "Optional when thumbnail_mode=manual. Filename in data/thumbnails (or absolute path)."},
+                {"key": "logo_file", "description": "Optional logo image filename in data/logos (or absolute path)."},
+                {"key": "logo_position", "description": "Optional: top-left, top-right, bottom-left, bottom-right, center."},
+                {"key": "logo_scale_percent", "description": "Optional logo size percent (5-40), default 15."},
+                {"key": "end_credits_text", "description": "Optional outro/end credits text."},
+                {"key": "end_credits_duration_sec", "description": "Optional end credits duration (2-30), default 5."},
+                {"key": "bgm_file", "description": "Optional music filename from data/music (or absolute path)."},
+                {"key": "bgm_volume", "description": "Optional music volume 0.00-1.00 (default 0.18)."},
+                {"key": "bgm_ducking", "description": "Optional true/false to auto-lower music during speech (default true)."},
                 {"key": "text_color", "description": "Subtitle text color, e.g. #FFFFFF (alias: font_color)."},
                 {"key": "bg_color", "description": "Subtitle background color, e.g. #000000 (alias: font_background)."},
                 {"key": "bold", "description": "true/false."},
                 {"key": "italic", "description": "true/false."},
+                {"key": "subtitle_preset", "description": "classic, viral, reels, or cinematic."},
+                {"key": "subtitle_template", "description": "Optional: fade, bold_center, karaoke_word_by_word, or bounce_fade."},
                 {"key": "alignment", "description": "ASS alignment 1-9 (Create Video style)."},
                 {"key": "placement", "description": "Alias for alignment: top, middle, or bottom."},
                 {"key": "tts_rate", "description": "Speech rate (120-240), default 175."},
@@ -1110,8 +1740,21 @@ def batch_template() -> StreamingResponse:
         "video_tags",
         "publish_at",
         "visibility",
+        "output_mode",
         "voice_style",
         "voice_gender",
+        "thumbnail_mode",
+        "thumbnail_file",
+        "logo_file",
+        "logo_position",
+        "logo_scale_percent",
+        "end_credits_text",
+        "end_credits_duration_sec",
+        "bgm_file",
+        "bgm_volume",
+        "bgm_ducking",
+        "subtitle_preset",
+        "subtitle_template",
         "subtitle_text_color",
         "subtitle_bg_color",
         "subtitle_bold",
@@ -1128,8 +1771,21 @@ def batch_template() -> StreamingResponse:
         "story,automation",
         "2026-03-03T10:00",
         "private",
+        "youtube",
         "professional",
         "male",
+        "auto",
+        "",
+        "",
+        "top-right",
+        "15",
+        "",
+        "5",
+        "sample_music.mp3",
+        "0.18",
+        "true",
+        "classic",
+        "fade",
         "#FFFFFF",
         "#000000",
         "false",
@@ -1139,6 +1795,48 @@ def batch_template() -> StreamingResponse:
     ]
     sheet.append(headers)
     sheet.append(sample)
+
+    subtitle_template_col = headers.index("subtitle_template") + 1
+    subtitle_template_col_letter = chr(64 + subtitle_template_col)
+    subtitle_template_validation = DataValidation(
+        type="list",
+        formula1='"fade,bold_center,karaoke_word_by_word,bounce_fade"',
+        allow_blank=True,
+    )
+    subtitle_template_validation.error = "Use one of: fade, bold_center, karaoke_word_by_word, bounce_fade."
+    subtitle_template_validation.errorTitle = "Invalid subtitle_template"
+    subtitle_template_validation.prompt = "Optional subtitle animation preset."
+    subtitle_template_validation.promptTitle = "subtitle_template"
+    sheet.add_data_validation(subtitle_template_validation)
+    subtitle_template_validation.add(f"{subtitle_template_col_letter}2:{subtitle_template_col_letter}5000")
+
+    thumbnail_mode_col = headers.index("thumbnail_mode") + 1
+    thumbnail_mode_col_letter = chr(64 + thumbnail_mode_col)
+    thumbnail_mode_validation = DataValidation(
+        type="list",
+        formula1='"auto,manual,none"',
+        allow_blank=True,
+    )
+    thumbnail_mode_validation.error = "Use auto, manual, or none."
+    thumbnail_mode_validation.errorTitle = "Invalid thumbnail_mode"
+    thumbnail_mode_validation.prompt = "Optional: auto, manual, or none."
+    thumbnail_mode_validation.promptTitle = "thumbnail_mode"
+    sheet.add_data_validation(thumbnail_mode_validation)
+    thumbnail_mode_validation.add(f"{thumbnail_mode_col_letter}2:{thumbnail_mode_col_letter}5000")
+
+    bgm_ducking_col = headers.index("bgm_ducking") + 1
+    bgm_ducking_col_letter = chr(64 + bgm_ducking_col)
+    bgm_ducking_validation = DataValidation(
+        type="list",
+        formula1='"true,false"',
+        allow_blank=True,
+    )
+    bgm_ducking_validation.error = "Use true or false."
+    bgm_ducking_validation.errorTitle = "Invalid bgm_ducking"
+    bgm_ducking_validation.prompt = "Optional: auto-lower music during speech."
+    bgm_ducking_validation.promptTitle = "bgm_ducking"
+    sheet.add_data_validation(bgm_ducking_validation)
+    bgm_ducking_validation.add(f"{bgm_ducking_col_letter}2:{bgm_ducking_col_letter}5000")
 
     output = BytesIO()
     workbook.save(output)
@@ -1234,6 +1932,68 @@ def process_batch_youtube(excel_file: UploadFile = File(...)) -> JSONResponse:
             upload_video_path = OUTPUT_DIR / output_name
             if not upload_video_path.exists():
                 raise FileNotFoundError(f"Generated output not found: {output_name}")
+            working_video_path = upload_video_path
+            logo_applied = False
+            logo_error = None
+            end_credits_applied = False
+            end_credits_error = None
+
+            logo_path = _resolve_batch_asset_path(
+                row,
+                ("logo_file", "logo_path", "batch_logo_file"),
+                LOGOS_DIR,
+            )
+            if logo_path:
+                raw_logo_position = str(row.get("logo_position") or "top-right").strip().lower()
+                logo_position = (
+                    raw_logo_position
+                    if raw_logo_position in {"top-left", "top-right", "bottom-left", "bottom-right", "center"}
+                    else "top-right"
+                )
+                try:
+                    logo_scale_percent = int(row.get("logo_scale_percent") or 15)
+                except (TypeError, ValueError):
+                    logo_scale_percent = 15
+                logo_scale_percent = max(5, min(40, logo_scale_percent))
+                logo_output_path = OUTPUT_DIR / f"{generated.get('job_id')}_batch_logo.mp4"
+                try:
+                    _apply_logo_overlay_to_video(
+                        video_path=working_video_path,
+                        logo_path=logo_path,
+                        output_path=logo_output_path,
+                        logo_position=logo_position,
+                        logo_scale_percent=logo_scale_percent,
+                    )
+                    working_video_path = logo_output_path
+                    logo_applied = True
+                except Exception as logo_exc:
+                    logo_error = str(logo_exc)
+
+            credits_text = str(
+                row.get("end_credits_text")
+                or row.get("credits_text")
+                or row.get("outro_text")
+                or ""
+            ).strip()
+            if credits_text:
+                try:
+                    credits_duration = int(row.get("end_credits_duration_sec") or 5)
+                except (TypeError, ValueError):
+                    credits_duration = 5
+                credits_duration = max(2, min(30, credits_duration))
+                credits_output_path = OUTPUT_DIR / f"{generated.get('job_id')}_batch_credits.mp4"
+                try:
+                    _apply_end_credits_to_video(
+                        video_path=working_video_path,
+                        output_path=credits_output_path,
+                        credits_text=credits_text,
+                        credits_duration_sec=credits_duration,
+                    )
+                    working_video_path = credits_output_path
+                    end_credits_applied = True
+                except Exception as credits_exc:
+                    end_credits_error = str(credits_exc)
+            upload_video_path = working_video_path
 
             title = str(
                 row.get("output_video_name")
@@ -1245,19 +2005,19 @@ def process_batch_youtube(excel_file: UploadFile = File(...)) -> JSONResponse:
             tags = [tag.strip() for tag in str(row.get("video_tags") or "").split(",") if tag.strip()]
 
             raw_visibility = str(row.get("visibility") or "private").strip().lower()
+            safe_visibility = (
+                raw_visibility
+                if raw_visibility in ("public", "private", "unlisted")
+                else "private"
+            )
             publish_at_input = str(row.get("publish_at") or "").strip()
             rfc3339_publish_at = _parse_publish_at(publish_at_input)
-            if rfc3339_publish_at:
+            if rfc3339_publish_at and safe_visibility != "private":
                 status_dict: dict[str, str] = {
                     "privacyStatus": "private",
                     "publishAt": rfc3339_publish_at,
                 }
             else:
-                safe_visibility = (
-                    raw_visibility
-                    if raw_visibility in ("public", "private", "unlisted")
-                    else "private"
-                )
                 status_dict = {"privacyStatus": safe_visibility}
 
             request_body = {
@@ -1276,14 +2036,71 @@ def process_batch_youtube(excel_file: UploadFile = File(...)) -> JSONResponse:
                 media_body=MediaFileUpload(str(upload_video_path), resumable=True),
             )
             response = upload_request.execute()
+            uploaded_video_id = str(response.get("id") or "").strip()
+            thumbnail_uploaded = False
+            thumbnail_error = None
+            if uploaded_video_id:
+                try:
+                    row_output_mode = _resolve_output_mode(
+                        row.get("output_mode") or row.get("aspect_mode") or row.get("format_mode")
+                    )
+                    thumbnail_mode_raw = str(
+                        row.get("thumbnail_mode")
+                        or row.get("thumbnail_type")
+                        or "auto"
+                    ).strip().lower()
+                    if row_output_mode in {"shorts", "reels", "square"} and thumbnail_mode_raw in {"none", "off", "skip", ""}:
+                        thumbnail_mode_raw = "auto"
+                    if thumbnail_mode_raw in {"none", "off", "skip"}:
+                        thumbnail_uploaded = False
+                    elif thumbnail_mode_raw in {"manual", "file", "custom"}:
+                        manual_thumbnail_path = _resolve_batch_asset_path(
+                            row,
+                            ("thumbnail_file", "thumbnail_path", "thumb_file"),
+                            THUMBNAILS_DIR,
+                        )
+                        if manual_thumbnail_path:
+                            service.thumbnails().set(
+                                videoId=uploaded_video_id,
+                                media_body=MediaFileUpload(str(manual_thumbnail_path)),
+                            ).execute()
+                            thumbnail_uploaded = True
+                        else:
+                            auto_thumbnail_path = OUTPUT_DIR / f"{uploaded_video_id}_thumb_auto.jpg"
+                            _generate_thumbnail_from_video(upload_video_path, auto_thumbnail_path)
+                            service.thumbnails().set(
+                                videoId=uploaded_video_id,
+                                media_body=MediaFileUpload(str(auto_thumbnail_path)),
+                            ).execute()
+                            thumbnail_uploaded = True
+                            thumbnail_error = "thumbnail_file not found; used auto thumbnail fallback."
+                    else:
+                        auto_thumbnail_path = OUTPUT_DIR / f"{uploaded_video_id}_thumb_auto.jpg"
+                        _generate_thumbnail_from_video(upload_video_path, auto_thumbnail_path)
+                        service.thumbnails().set(
+                            videoId=uploaded_video_id,
+                            media_body=MediaFileUpload(str(auto_thumbnail_path)),
+                        ).execute()
+                        thumbnail_uploaded = True
+                except Exception as thumb_exc:
+                    thumbnail_error = str(thumb_exc)
 
             result = {
                 **generated,
                 "youtube_uploaded": True,
-                "youtube_video_id": response.get("id"),
-                "youtube_video_url": f"https://www.youtube.com/watch?v={response.get('id')}",
+                "youtube_video_id": uploaded_video_id,
+                "youtube_video_url": f"https://www.youtube.com/watch?v={uploaded_video_id}",
+                "thumbnail_uploaded": thumbnail_uploaded,
+                "logo_applied": logo_applied,
+                "end_credits_applied": end_credits_applied,
             }
-            if rfc3339_publish_at:
+            if thumbnail_error:
+                result["thumbnail_error"] = thumbnail_error
+            if logo_error:
+                result["logo_error"] = logo_error
+            if end_credits_error:
+                result["end_credits_error"] = end_credits_error
+            if rfc3339_publish_at and safe_visibility != "private":
                 result["scheduled_publish_at"] = rfc3339_publish_at
             jobs.append(result)
         except HttpError as exc:
@@ -1476,16 +2293,16 @@ def youtube_upload(
         if not any(t.lower() in {"shorts", "#shorts"} for t in parsed_tags):
             parsed_tags.append("Shorts")
 
+    safe_visibility = (
+        visibility if visibility in ("public", "private", "unlisted") else "private"
+    )
     rfc3339_publish_at = _parse_publish_at(publish_at)
-    if rfc3339_publish_at:
+    if rfc3339_publish_at and safe_visibility != "private":
         status_dict: dict[str, str] = {
             "privacyStatus": "private",
             "publishAt": rfc3339_publish_at,
         }
     else:
-        safe_visibility = (
-            visibility if visibility in ("public", "private", "unlisted") else "private"
-        )
         status_dict = {"privacyStatus": safe_visibility}
 
     request_body = {
@@ -1564,7 +2381,7 @@ def youtube_upload(
         "short_processed": short_processed,
         "short_error": short_error,
     }
-    if rfc3339_publish_at:
+    if rfc3339_publish_at and safe_visibility != "private":
         payload["scheduled_publish_at"] = rfc3339_publish_at
     return JSONResponse(payload)
 

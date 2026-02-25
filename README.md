@@ -73,6 +73,9 @@ AutoStoryTube/
 |   |   |-- client_secret.json          # local only, do not commit
 |   |   `-- token.json                  # local only, generated after OAuth
 |   |-- outputs                          # rendered videos and generated upload intermediates
+|   |-- logos                            # optional batch logo files
+|   |-- thumbnails                       # optional batch manual thumbnails
+|   |-- music                            # optional background music files
 |   |-- scripts
 |   |   `-- README.md
 |   |-- uploads
@@ -129,15 +132,35 @@ Common optional columns:
 
 - `output_video_name`, `video_description`, `video_tags`
 - YouTube upload controls:
-  - `publish_at` (future datetime; row gets scheduled on YouTube)
-  - `visibility` (`public` / `private` / `unlisted`, used when `publish_at` is blank)
+  - `publish_at` (future datetime; used for scheduling only when visibility is `public` or `unlisted`)
+  - `visibility` (`public` / `private` / `unlisted`)
+- output framing:
+  - `output_mode` (`youtube` = 16:9, `shorts`/`reels` = 9:16, `square` = 1:1)
 - `voice_style`, `voice_gender`, `tts_rate`
+- thumbnail/branding (optional):
+  - `thumbnail_mode` (`auto`, `manual`, `none`)
+  - `thumbnail_file` (used when `thumbnail_mode=manual`, from `data/thumbnails`)
+  - `logo_file` (from `data/logos`)
+  - `logo_position` (`top-left`, `top-right`, `bottom-left`, `bottom-right`, `center`)
+  - `logo_scale_percent` (`5`-`40`)
+  - `end_credits_text`
+  - `end_credits_duration_sec`
+- background music (optional):
+  - `bgm_file` (filename from `data/music` or absolute path)
+  - `bgm_volume` (0.00 to 1.00, default `0.18`)
+  - `bgm_ducking` (`true`/`false`, default `true`)
 - subtitle styling:
+  - `subtitle_preset` (`classic`, `viral`, `reels`, `cinematic`)
+  - `subtitle_template` (`fade`, `bold_center`, `karaoke_word_by_word`, `bounce_fade`)
   - `text_color` / `subtitle_text_color`
   - `bg_color` / `subtitle_bg_color`
   - `bold` / `subtitle_bold`
   - `italic` / `subtitle_italic`
   - `placement` / `subtitle_placement`
+
+`subtitle_preset` sets defaults (font size, color theme, weight, placement margin);
+explicit `text_color/bg_color/bold/italic/alignment` values in the row still override.
+`subtitle_template` is optional and controls subtitle animation style.
 
 The app also supports downloading a ready-made batch template from the Bulk
 Upload UI (`Download Batch Template`).
@@ -147,10 +170,15 @@ Upload UI (`Download Batch Template`).
 In the Bulk Upload page, enable `Generate + upload to YouTube` to process each
 Excel row and upload it directly to YouTube.
 
-- If a row has `publish_at`, the upload is scheduled (`private` + `publishAt`).
+- If a row has `publish_at` and `visibility` is `public` or `unlisted`, the upload is scheduled with YouTube `publishAt`.
+- If `visibility` is `private`, the upload remains private and `publish_at` is not applied.
 - If `publish_at` is blank/invalid/past, normal `visibility` is used.
 - If `publish_at` has no timezone (example `2026-03-03T10:00`), it is treated
   as your local machine time and then converted to UTC for YouTube.
+- Thumbnail behavior in batch:
+  - `thumbnail_mode=auto` generates an auto thumbnail from rendered video.
+  - `thumbnail_mode=manual` uses `thumbnail_file`; if file is missing, it falls back to auto.
+  - For `output_mode` in `shorts` / `reels` / `square`, blank/none thumbnail mode defaults to auto.
 
 ---
 
