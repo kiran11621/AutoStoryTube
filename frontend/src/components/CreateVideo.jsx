@@ -75,10 +75,72 @@ export default function CreateVideo() {
 			iconClass: "text-rose-400",
 		},
 	];
+	const subtitlePresets = {
+		classic: {
+			label: "Classic",
+			textColor: "#ffffff",
+			bgColor: "#000000",
+			bold: false,
+			italic: false,
+			alignment: "2",
+		},
+		viral: {
+			label: "Viral",
+			textColor: "#ffffff",
+			bgColor: "#ff4d00",
+			bold: true,
+			italic: false,
+			alignment: "2",
+		},
+		reels: {
+			label: "Reels",
+			textColor: "#f5f7fa",
+			bgColor: "#1f2937",
+			bold: true,
+			italic: false,
+			alignment: "2",
+		},
+		cinematic: {
+			label: "Cinematic",
+			textColor: "#f7e7c6",
+			bgColor: "#101010",
+			bold: false,
+			italic: false,
+			alignment: "2",
+		},
+	};
+	const subtitleTemplates = [
+		{
+			key: "fade",
+			label: "Fade",
+			description: "Classic fade in/out",
+		},
+		{
+			key: "bold_center",
+			label: "Bold Center",
+			description: "Centered punch captions",
+		},
+		{
+			key: "karaoke_word_by_word",
+			label: "Karaoke",
+			description: "Word-by-word highlight",
+		},
+		{
+			key: "bounce_fade",
+			label: "Bounce/Fade",
+			description: "Scale pop with fade",
+		},
+	];
 	const [videoFile, setVideoFile] = useState(null);
 	const [textFile, setTextFile] = useState(null);
+	const [bgmFile, setBgmFile] = useState(null);
+	const [bgmVolume, setBgmVolume] = useState(18);
+	const [bgmDucking, setBgmDucking] = useState(true);
 	const [voiceStyle, setVoiceStyle] = useState("professional");
 	const [voiceGender, setVoiceGender] = useState("male");
+	const [outputMode, setOutputMode] = useState("youtube");
+	const [subtitlePreset, setSubtitlePreset] = useState("classic");
+	const [subtitleTemplate, setSubtitleTemplate] = useState("fade");
 	const [subtitlePosition, setSubtitlePosition] = useState("bottom");
 	const [subtitleTextColor, setSubtitleTextColor] = useState("#ffffff");
 	const [subtitleBgColor, setSubtitleBgColor] = useState("#000000");
@@ -92,6 +154,21 @@ export default function CreateVideo() {
 	const [errorMessage, setErrorMessage] = useState("");
 	const [outputUrl, setOutputUrl] = useState("");
 
+	const applySubtitlePreset = (presetKey) => {
+		const preset = subtitlePresets[presetKey] || subtitlePresets.classic;
+		const positionMap = {
+			"8": "top",
+			"5": "middle",
+			"2": "bottom",
+		};
+		setSubtitlePreset(presetKey);
+		setSubtitleTextColor(preset.textColor);
+		setSubtitleBgColor(preset.bgColor);
+		setSubtitleBold(Boolean(preset.bold));
+		setSubtitleItalic(Boolean(preset.italic));
+		setSubtitlePosition(positionMap[preset.alignment] || "bottom");
+	};
+
 	const onVideoDrop = (acceptedFiles) => {
 		const file = acceptedFiles[0];
 		if (file) setVideoFile(file);
@@ -100,6 +177,10 @@ export default function CreateVideo() {
 	const onTextDrop = (acceptedFiles) => {
 		const file = acceptedFiles[0];
 		if (file) setTextFile(file);
+	};
+	const onBgmDrop = (acceptedFiles) => {
+		const file = acceptedFiles[0];
+		if (file) setBgmFile(file);
 	};
 
 	const {
@@ -118,6 +199,21 @@ export default function CreateVideo() {
 	} = useDropzone({
 		onDrop: onTextDrop,
 		accept: { "text/plain": [".txt"] },
+	});
+	const {
+		getRootProps: getBgmProps,
+		getInputProps: getBgmInputProps,
+		isDragActive: isBgmDragActive,
+	} = useDropzone({
+		onDrop: onBgmDrop,
+		accept: {
+			"audio/mpeg": [".mp3"],
+			"audio/wav": [".wav"],
+			"audio/x-wav": [".wav"],
+			"audio/mp4": [".m4a"],
+			"audio/aac": [".aac"],
+		},
+		multiple: false,
 	});
 
 	const handleGenerate = async () => {
@@ -161,6 +257,14 @@ export default function CreateVideo() {
 			formData.append("bold", subtitleBold ? "true" : "false");
 			formData.append("italic", subtitleItalic ? "true" : "false");
 			formData.append("alignment", alignmentMap[subtitlePosition]);
+			formData.append("subtitle_preset", subtitlePreset);
+			formData.append("subtitle_template", subtitleTemplate);
+			formData.append("output_mode", outputMode);
+			formData.append("bgm_volume", (bgmVolume / 100).toFixed(2));
+			formData.append("bgm_ducking", bgmDucking ? "true" : "false");
+			if (bgmFile) {
+				formData.append("bgm_file", bgmFile);
+			}
 			formData.append("voice_style", voiceStyle);
 			formData.append("voice_gender", voiceGender);
 
@@ -211,7 +315,7 @@ export default function CreateVideo() {
 						</p>
 					</div>
 
-					<div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+					<div className="grid grid-cols-1 md:grid-cols-3 gap-3">
 						{/* Video Upload */}
 						<motion.div
 							{...getVideoProps()}
@@ -261,7 +365,67 @@ export default function CreateVideo() {
 								</p>
 							</div>
 						</motion.div>
+
+						{/* Optional BGM Upload */}
+						<motion.div
+							{...getBgmProps()}
+							className={`rounded-xl p-5 border-2 border-dashed transition-all cursor-pointer ${
+								isBgmDragActive
+									? "border-emerald-400 bg-emerald-500/10"
+									: "border-slate-600 bg-slate-800/50 hover:border-emerald-400"
+							}`}
+							whileHover={{ scale: 1.01 }}
+						>
+							<input {...getBgmInputProps()} />
+							<div className="text-center">
+								<div className="text-2xl mb-2 flex items-center justify-center gap-2">
+									<Mic className="w-5 h-5 text-emerald-400" />
+									<span>BGM</span>
+								</div>
+								<p className="text-slate-300 text-sm font-semibold truncate">
+									{bgmFile ? bgmFile.name : "Optional MP3/WAV music"}
+								</p>
+								<p className="text-slate-500 text-xs mt-1">
+									drag/drop or click to browse
+								</p>
+							</div>
+						</motion.div>
 					</div>
+
+					{/* BGM Controls */}
+					<motion.div className="space-y-3">
+						<label className="text-slate-300 font-semibold flex justify-between">
+							<span className="flex items-center gap-2">
+								<SlidersHorizontal className="w-4 h-4 text-emerald-400" />
+								Background Music Volume
+							</span>
+							<span className="text-emerald-400">{bgmVolume}%</span>
+						</label>
+						<input
+							type="range"
+							min="0"
+							max="60"
+							value={bgmVolume}
+							onChange={(e) => setBgmVolume(Number(e.target.value))}
+							className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+						/>
+						<div className="flex items-center justify-between rounded-xl border border-slate-700 bg-slate-800/60 px-4 py-3">
+							<span className="text-slate-300 text-sm font-medium">
+								Auto lower music while voice speaks
+							</span>
+							<button
+								type="button"
+								onClick={() => setBgmDucking((prev) => !prev)}
+								className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
+									bgmDucking
+										? "border-emerald-400/60 bg-emerald-500/20 text-emerald-200"
+										: "border-slate-700 bg-slate-900/50 text-slate-300"
+								}`}
+							>
+								{bgmDucking ? "On" : "Off"}
+							</button>
+						</div>
+					</motion.div>
 
 					{/* TTS Speed Slider */}
 					<motion.div className="space-y-3">
@@ -364,6 +528,59 @@ export default function CreateVideo() {
 					</motion.div>
 
 					<motion.div className="space-y-3">
+						<label className="text-slate-300 font-semibold flex items-center gap-2">
+							<Video className="w-4 h-4 text-purple-400" />
+							Output Mode
+						</label>
+						<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+							<button
+								type="button"
+								onClick={() => setOutputMode("shorts")}
+								className={`rounded-xl border px-4 py-3 text-sm font-medium transition ${
+									outputMode === "shorts"
+										? "border-purple-400 bg-purple-500/20 text-white"
+										: "border-slate-700 bg-slate-800/60 text-slate-300 hover:border-purple-500/70"
+								}`}
+							>
+								YouTube Shorts (9:16)
+							</button>
+							<button
+								type="button"
+								onClick={() => setOutputMode("reels")}
+								className={`rounded-xl border px-4 py-3 text-sm font-medium transition ${
+									outputMode === "reels"
+										? "border-purple-400 bg-purple-500/20 text-white"
+										: "border-slate-700 bg-slate-800/60 text-slate-300 hover:border-purple-500/70"
+								}`}
+							>
+								Reels (9:16)
+							</button>
+							<button
+								type="button"
+								onClick={() => setOutputMode("square")}
+								className={`rounded-xl border px-4 py-3 text-sm font-medium transition ${
+									outputMode === "square"
+										? "border-purple-400 bg-purple-500/20 text-white"
+										: "border-slate-700 bg-slate-800/60 text-slate-300 hover:border-purple-500/70"
+								}`}
+							>
+								Square (1:1)
+							</button>
+							<button
+								type="button"
+								onClick={() => setOutputMode("youtube")}
+								className={`rounded-xl border px-4 py-3 text-sm font-medium transition ${
+									outputMode === "youtube"
+										? "border-purple-400 bg-purple-500/20 text-white"
+										: "border-slate-700 bg-slate-800/60 text-slate-300 hover:border-purple-500/70"
+								}`}
+							>
+								Standard YouTube (16:9)
+							</button>
+						</div>
+					</motion.div>
+
+					<motion.div className="space-y-3">
 						<button
 							type="button"
 							onClick={() => setShowSubtitleSettings((prev) => !prev)}
@@ -382,6 +599,57 @@ export default function CreateVideo() {
 
 						{showSubtitleSettings ? (
 							<div className="space-y-4">
+								<motion.div className="space-y-3">
+									<label className="text-slate-300 font-semibold flex items-center gap-2">
+										<Type className="w-4 h-4 text-purple-400" />
+										Subtitle Preset
+									</label>
+									<div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+										{Object.entries(subtitlePresets).map(([key, preset]) => (
+											<button
+												key={key}
+												type="button"
+												onClick={() => applySubtitlePreset(key)}
+												className={`rounded-xl border px-4 py-3 text-sm font-medium transition ${
+													subtitlePreset === key
+														? "border-purple-400 bg-purple-500/20 text-white"
+														: "border-slate-700 bg-slate-800/60 text-slate-300 hover:border-purple-500/70"
+												}`}
+											>
+												{preset.label}
+											</button>
+										))}
+									</div>
+								</motion.div>
+
+								<motion.div className="space-y-3">
+									<label className="text-slate-300 font-semibold flex items-center gap-2">
+										<FileText className="w-4 h-4 text-purple-400" />
+										Subtitle Animation
+									</label>
+									<div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+										{subtitleTemplates.map(({ key, label, description }) => (
+											<button
+												key={key}
+												type="button"
+												onClick={() => setSubtitleTemplate(key)}
+												className={`rounded-xl border px-4 py-3 text-sm font-medium transition ${
+													subtitleTemplate === key
+														? "border-purple-400 bg-purple-500/20 text-white"
+														: "border-slate-700 bg-slate-800/60 text-slate-300 hover:border-purple-500/70"
+												}`}
+											>
+												<div className="text-left">
+													<p className="font-semibold leading-tight">{label}</p>
+													<p className="text-[11px] text-slate-400 leading-tight mt-1">
+														{description}
+													</p>
+												</div>
+											</button>
+										))}
+									</div>
+								</motion.div>
+
 								{/* Subtitle Position */}
 								<motion.div className="space-y-3">
 									<label className="text-slate-300 font-semibold flex items-center gap-2">
