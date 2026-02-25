@@ -10,21 +10,40 @@ The YouTube upload flow supports all three post-processing features:
 
 It runs completely offline **except for the YouTube upload step**.
 
-## One-command start
+## Prerequisites
 
-### macOS / Linux
+Install these before running the app:
+
+- Python 3.10+ (with `pip`)
+- Node.js 18+ (includes `npm`)
+- FFmpeg (must be available on your `PATH`)
+
+## Quick start (React frontend)
+
+The app uses a React frontend + FastAPI backend.
+
+1. Start the backend API (terminal 1):
+   - macOS/Linux: `./run.sh`
+   - Windows (PowerShell): `./run.ps1`
+   - First run: script creates `.venv` and installs Python dependencies automatically.
+2. Start the React frontend (terminal 2):
 
 ```bash
-./run.sh
+cd frontend
+npm install
+npm run dev
 ```
 
-### Windows (PowerShell)
+3. Later runs (frontend), you usually only need:
 
-```powershell
-./run.ps1
+```bash
+cd frontend
+npm run dev
 ```
 
-Then open: [http://localhost:8000](http://localhost:8000)
+4. Open the app at: [http://localhost:5173](http://localhost:5173)
+
+The Vite dev server proxies `/api` requests to `http://localhost:8000`.
 
 ---
 
@@ -34,11 +53,6 @@ Then open: [http://localhost:8000](http://localhost:8000)
 AutoStoryTube/
 |-- app
 |   |-- main.py                         # FastAPI backend (render + batch + YouTube upload)
-|   |-- static
-|   |   |-- app.js                      # legacy static UI
-|   |   `-- styles.css                  # legacy static UI
-|   `-- templates
-|       `-- index.html                  # legacy static UI template
 |-- frontend
 |   |-- index.html
 |   |-- package.json
