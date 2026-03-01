@@ -119,6 +119,10 @@ You can keep reusable background videos in `data/video_library` and list them
 in `data/video_library/catalog.json`. The UI will show the list and let you
 select a video by code instead of uploading every time.
 
+`context_switch` (context-based video changing) also uses clips from this same
+local `data/video_library` folder. To make it work on another machine, copy the
+`data/video_library` files and keep `catalog.json` in sync with actual files.
+
 For batch generation, upload one Excel file where each row is one video.
 
 Required columns per row:

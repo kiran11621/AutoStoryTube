@@ -1,7 +1,402 @@
-[
-	{
-		"code": "sample_loop",
-		"title": "Sample Loop Video",
-		"filename": "sample_loop.mp4"
-	}
+﻿[
+    {
+        "code":  "motivation_001",
+        "title":  "Motivation Clip 001",
+        "filename":  "motivation/motivation_cin_001.mp4"
+    },
+    {
+        "code":  "motivation_002",
+        "title":  "Motivation Clip 002",
+        "filename":  "motivation/motivation_cin_002.mp4"
+    },
+    {
+        "code":  "motivation_003",
+        "title":  "Motivation Clip 003",
+        "filename":  "motivation/motivation_cin_003.mp4"
+    },
+    {
+        "code":  "motivation_004",
+        "title":  "Motivation Clip 004",
+        "filename":  "motivation/motivation_cin_004.mp4"
+    },
+    {
+        "code":  "motivation_005",
+        "title":  "Motivation Clip 005",
+        "filename":  "motivation/motivation_cin_005.mp4"
+    },
+    {
+        "code":  "motivation_006",
+        "title":  "Motivation Clip 006",
+        "filename":  "motivation/motivation_cin_006.mp4"
+    },
+    {
+        "code":  "motivation_007",
+        "title":  "Motivation Clip 007",
+        "filename":  "motivation/motivation_cin_007.mp4"
+    },
+    {
+        "code":  "motivation_008",
+        "title":  "Motivation Clip 008",
+        "filename":  "motivation/motivation_cin_008.mp4"
+    },
+    {
+        "code":  "mindset_001",
+        "title":  "Mindset Clip 001",
+        "filename":  "mindset/mindset_cin_001.mp4"
+    },
+    {
+        "code":  "mindset_002",
+        "title":  "Mindset Clip 002",
+        "filename":  "mindset/mindset_cin_002.mp4"
+    },
+    {
+        "code":  "mindset_003",
+        "title":  "Mindset Clip 003",
+        "filename":  "mindset/mindset_cin_003.mp4"
+    },
+    {
+        "code":  "mindset_004",
+        "title":  "Mindset Clip 004",
+        "filename":  "mindset/mindset_cin_004.mp4"
+    },
+    {
+        "code":  "mindset_005",
+        "title":  "Mindset Clip 005",
+        "filename":  "mindset/mindset_cin_005.mp4"
+    },
+    {
+        "code":  "mindset_006",
+        "title":  "Mindset Clip 006",
+        "filename":  "mindset/mindset_cin_006.mp4"
+    },
+    {
+        "code":  "mindset_007",
+        "title":  "Mindset Clip 007",
+        "filename":  "mindset/mindset_cin_007.mp4"
+    },
+    {
+        "code":  "mindset_008",
+        "title":  "Mindset Clip 008",
+        "filename":  "mindset/mindset_cin_008.mp4"
+    },
+    {
+        "code":  "success_001",
+        "title":  "Success Clip 001",
+        "filename":  "success/success_cin_001.mp4"
+    },
+    {
+        "code":  "success_002",
+        "title":  "Success Clip 002",
+        "filename":  "success/success_cin_002.mp4"
+    },
+    {
+        "code":  "success_003",
+        "title":  "Success Clip 003",
+        "filename":  "success/success_cin_003.mp4"
+    },
+    {
+        "code":  "success_004",
+        "title":  "Success Clip 004",
+        "filename":  "success/success_cin_004.mp4"
+    },
+    {
+        "code":  "success_005",
+        "title":  "Success Clip 005",
+        "filename":  "success/success_cin_005.mp4"
+    },
+    {
+        "code":  "success_006",
+        "title":  "Success Clip 006",
+        "filename":  "success/success_cin_006.mp4"
+    },
+    {
+        "code":  "success_007",
+        "title":  "Success Clip 007",
+        "filename":  "success/success_cin_007.mp4"
+    },
+    {
+        "code":  "success_008",
+        "title":  "Success Clip 008",
+        "filename":  "success/success_cin_008.mp4"
+    },
+    {
+        "code":  "business_001",
+        "title":  "Business Clip 001",
+        "filename":  "business/business_cin_001.mp4"
+    },
+    {
+        "code":  "business_002",
+        "title":  "Business Clip 002",
+        "filename":  "business/business_cin_002.mp4"
+    },
+    {
+        "code":  "business_003",
+        "title":  "Business Clip 003",
+        "filename":  "business/business_cin_003.mp4"
+    },
+    {
+        "code":  "business_004",
+        "title":  "Business Clip 004",
+        "filename":  "business/business_cin_004.mp4"
+    },
+    {
+        "code":  "business_005",
+        "title":  "Business Clip 005",
+        "filename":  "business/business_cin_005.mp4"
+    },
+    {
+        "code":  "business_006",
+        "title":  "Business Clip 006",
+        "filename":  "business/business_cin_006.mp4"
+    },
+    {
+        "code":  "business_007",
+        "title":  "Business Clip 007",
+        "filename":  "business/business_cin_007.mp4"
+    },
+    {
+        "code":  "business_008",
+        "title":  "Business Clip 008",
+        "filename":  "business/business_cin_008.mp4"
+    },
+    {
+        "code":  "finance_001",
+        "title":  "Finance Clip 001",
+        "filename":  "finance/finance_cin_001.mp4"
+    },
+    {
+        "code":  "finance_002",
+        "title":  "Finance Clip 002",
+        "filename":  "finance/finance_cin_002.mp4"
+    },
+    {
+        "code":  "finance_003",
+        "title":  "Finance Clip 003",
+        "filename":  "finance/finance_cin_003.mp4"
+    },
+    {
+        "code":  "finance_004",
+        "title":  "Finance Clip 004",
+        "filename":  "finance/finance_cin_004.mp4"
+    },
+    {
+        "code":  "finance_005",
+        "title":  "Finance Clip 005",
+        "filename":  "finance/finance_cin_005.mp4"
+    },
+    {
+        "code":  "finance_006",
+        "title":  "Finance Clip 006",
+        "filename":  "finance/finance_cin_006.mp4"
+    },
+    {
+        "code":  "finance_007",
+        "title":  "Finance Clip 007",
+        "filename":  "finance/finance_cin_007.mp4"
+    },
+    {
+        "code":  "finance_008",
+        "title":  "Finance Clip 008",
+        "filename":  "finance/finance_cin_008.mp4"
+    },
+    {
+        "code":  "politics_001",
+        "title":  "Politics Clip 001",
+        "filename":  "politics/politics_cin_001.mp4"
+    },
+    {
+        "code":  "politics_002",
+        "title":  "Politics Clip 002",
+        "filename":  "politics/politics_cin_002.mp4"
+    },
+    {
+        "code":  "politics_003",
+        "title":  "Politics Clip 003",
+        "filename":  "politics/politics_cin_003.mp4"
+    },
+    {
+        "code":  "politics_004",
+        "title":  "Politics Clip 004",
+        "filename":  "politics/politics_cin_004.mp4"
+    },
+    {
+        "code":  "politics_005",
+        "title":  "Politics Clip 005",
+        "filename":  "politics/politics_cin_005.mp4"
+    },
+    {
+        "code":  "politics_006",
+        "title":  "Politics Clip 006",
+        "filename":  "politics/politics_cin_006.mp4"
+    },
+    {
+        "code":  "politics_007",
+        "title":  "Politics Clip 007",
+        "filename":  "politics/politics_cin_007.mp4"
+    },
+    {
+        "code":  "politics_008",
+        "title":  "Politics Clip 008",
+        "filename":  "politics/politics_cin_008.mp4"
+    },
+    {
+        "code":  "currentaffairs_001",
+        "title":  "Currentaffairs Clip 001",
+        "filename":  "currentaffairs/currentaffairs_cin_001.mp4"
+    },
+    {
+        "code":  "currentaffairs_002",
+        "title":  "Currentaffairs Clip 002",
+        "filename":  "currentaffairs/currentaffairs_cin_002.mp4"
+    },
+    {
+        "code":  "currentaffairs_003",
+        "title":  "Currentaffairs Clip 003",
+        "filename":  "currentaffairs/currentaffairs_cin_003.mp4"
+    },
+    {
+        "code":  "currentaffairs_004",
+        "title":  "Currentaffairs Clip 004",
+        "filename":  "currentaffairs/currentaffairs_cin_004.mp4"
+    },
+    {
+        "code":  "currentaffairs_005",
+        "title":  "Currentaffairs Clip 005",
+        "filename":  "currentaffairs/currentaffairs_cin_005.mp4"
+    },
+    {
+        "code":  "currentaffairs_006",
+        "title":  "Currentaffairs Clip 006",
+        "filename":  "currentaffairs/currentaffairs_cin_006.mp4"
+    },
+    {
+        "code":  "currentaffairs_007",
+        "title":  "Currentaffairs Clip 007",
+        "filename":  "currentaffairs/currentaffairs_cin_007.mp4"
+    },
+    {
+        "code":  "currentaffairs_008",
+        "title":  "Currentaffairs Clip 008",
+        "filename":  "currentaffairs/currentaffairs_cin_008.mp4"
+    },
+    {
+        "code":  "socialcommentary_001",
+        "title":  "Socialcommentary Clip 001",
+        "filename":  "socialcommentary/socialcommentary_cin_001.mp4"
+    },
+    {
+        "code":  "socialcommentary_002",
+        "title":  "Socialcommentary Clip 002",
+        "filename":  "socialcommentary/socialcommentary_cin_002.mp4"
+    },
+    {
+        "code":  "socialcommentary_003",
+        "title":  "Socialcommentary Clip 003",
+        "filename":  "socialcommentary/socialcommentary_cin_003.mp4"
+    },
+    {
+        "code":  "socialcommentary_004",
+        "title":  "Socialcommentary Clip 004",
+        "filename":  "socialcommentary/socialcommentary_cin_004.mp4"
+    },
+    {
+        "code":  "socialcommentary_005",
+        "title":  "Socialcommentary Clip 005",
+        "filename":  "socialcommentary/socialcommentary_cin_005.mp4"
+    },
+    {
+        "code":  "socialcommentary_006",
+        "title":  "Socialcommentary Clip 006",
+        "filename":  "socialcommentary/socialcommentary_cin_006.mp4"
+    },
+    {
+        "code":  "socialcommentary_007",
+        "title":  "Socialcommentary Clip 007",
+        "filename":  "socialcommentary/socialcommentary_cin_007.mp4"
+    },
+    {
+        "code":  "socialcommentary_008",
+        "title":  "Socialcommentary Clip 008",
+        "filename":  "socialcommentary/socialcommentary_cin_008.mp4"
+    },
+    {
+        "code":  "reallifestories_001",
+        "title":  "Reallifestories Clip 001",
+        "filename":  "reallifestories/reallifestories_cin_001.mp4"
+    },
+    {
+        "code":  "reallifestories_002",
+        "title":  "Reallifestories Clip 002",
+        "filename":  "reallifestories/reallifestories_cin_002.mp4"
+    },
+    {
+        "code":  "reallifestories_003",
+        "title":  "Reallifestories Clip 003",
+        "filename":  "reallifestories/reallifestories_cin_003.mp4"
+    },
+    {
+        "code":  "reallifestories_004",
+        "title":  "Reallifestories Clip 004",
+        "filename":  "reallifestories/reallifestories_cin_004.mp4"
+    },
+    {
+        "code":  "reallifestories_005",
+        "title":  "Reallifestories Clip 005",
+        "filename":  "reallifestories/reallifestories_cin_005.mp4"
+    },
+    {
+        "code":  "reallifestories_006",
+        "title":  "Reallifestories Clip 006",
+        "filename":  "reallifestories/reallifestories_cin_006.mp4"
+    },
+    {
+        "code":  "reallifestories_007",
+        "title":  "Reallifestories Clip 007",
+        "filename":  "reallifestories/reallifestories_cin_007.mp4"
+    },
+    {
+        "code":  "reallifestories_008",
+        "title":  "Reallifestories Clip 008",
+        "filename":  "reallifestories/reallifestories_cin_008.mp4"
+    },
+    {
+        "code":  "viraltrends_001",
+        "title":  "Viraltrends Clip 001",
+        "filename":  "viraltrends/viraltrends_cin_001.mp4"
+    },
+    {
+        "code":  "viraltrends_002",
+        "title":  "Viraltrends Clip 002",
+        "filename":  "viraltrends/viraltrends_cin_002.mp4"
+    },
+    {
+        "code":  "viraltrends_003",
+        "title":  "Viraltrends Clip 003",
+        "filename":  "viraltrends/viraltrends_cin_003.mp4"
+    },
+    {
+        "code":  "viraltrends_004",
+        "title":  "Viraltrends Clip 004",
+        "filename":  "viraltrends/viraltrends_cin_004.mp4"
+    },
+    {
+        "code":  "viraltrends_005",
+        "title":  "Viraltrends Clip 005",
+        "filename":  "viraltrends/viraltrends_cin_005.mp4"
+    },
+    {
+        "code":  "viraltrends_006",
+        "title":  "Viraltrends Clip 006",
+        "filename":  "viraltrends/viraltrends_cin_006.mp4"
+    },
+    {
+        "code":  "viraltrends_007",
+        "title":  "Viraltrends Clip 007",
+        "filename":  "viraltrends/viraltrends_cin_007.mp4"
+    },
+    {
+        "code":  "viraltrends_008",
+        "title":  "Viraltrends Clip 008",
+        "filename":  "viraltrends/viraltrends_cin_008.mp4"
+    }
 ]

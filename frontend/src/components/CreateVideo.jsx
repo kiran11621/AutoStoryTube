@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { useDropzone } from "react-dropzone";
 import {
@@ -31,6 +31,18 @@ import {
 } from "lucide-react";
 
 export default function CreateVideo() {
+	const defaultContextCategories = [
+		"motivation",
+		"mindset",
+		"success",
+		"business",
+		"finance",
+		"politics",
+		"currentaffairs",
+		"socialcommentary",
+		"reallifestories",
+		"viraltrends",
+	];
 	const voiceStyles = [
 		{
 			key: "professional",
@@ -133,12 +145,17 @@ export default function CreateVideo() {
 	];
 	const [videoFile, setVideoFile] = useState(null);
 	const [textFile, setTextFile] = useState(null);
+	const [libraryCode, setLibraryCode] = useState("");
 	const [bgmFile, setBgmFile] = useState(null);
 	const [bgmVolume, setBgmVolume] = useState(18);
 	const [bgmDucking, setBgmDucking] = useState(true);
 	const [voiceStyle, setVoiceStyle] = useState("professional");
 	const [voiceGender, setVoiceGender] = useState("male");
 	const [outputMode, setOutputMode] = useState("youtube");
+	const [videoStrategy, setVideoStrategy] = useState("single");
+	const [categoryHint, setCategoryHint] = useState("");
+	const [contextSceneCount, setContextSceneCount] = useState(6);
+	const [availableCategories, setAvailableCategories] = useState([]);
 	const [subtitlePreset, setSubtitlePreset] = useState("classic");
 	const [subtitleTemplate, setSubtitleTemplate] = useState("fade");
 	const [subtitlePosition, setSubtitlePosition] = useState("bottom");
@@ -147,12 +164,40 @@ export default function CreateVideo() {
 	const [subtitleBold, setSubtitleBold] = useState(false);
 	const [subtitleItalic, setSubtitleItalic] = useState(false);
 	const [showSubtitleSettings, setShowSubtitleSettings] = useState(false);
-	const [ttsSpeed, setTtsSpeed] = useState(150);
+	const [ttsSpeed, setTtsSpeed] = useState(175);
 	const [isProcessing, setIsProcessing] = useState(false);
 	const [progress, setProgress] = useState(0);
 	const [status, setStatus] = useState(null); // 'processing', 'success', 'error'
 	const [errorMessage, setErrorMessage] = useState("");
 	const [outputUrl, setOutputUrl] = useState("");
+
+	useEffect(() => {
+		let isMounted = true;
+		const loadCategories = async () => {
+			try {
+				const response = await fetch("/api/library/categories");
+				const data = await response.json();
+				if (!response.ok) return;
+				const categories = Array.isArray(data?.categories)
+					? data.categories
+					: [];
+				if (isMounted) {
+					setAvailableCategories(
+						categories.length ? categories : defaultContextCategories,
+					);
+				}
+			} catch {
+				// Non-blocking: keep UI usable even if categories API fails.
+				if (isMounted) {
+					setAvailableCategories(defaultContextCategories);
+				}
+			}
+		};
+		loadCategories();
+		return () => {
+			isMounted = false;
+		};
+	}, []);
 
 	const applySubtitlePreset = (presetKey) => {
 		const preset = subtitlePresets[presetKey] || subtitlePresets.classic;
@@ -217,9 +262,15 @@ export default function CreateVideo() {
 	});
 
 	const handleGenerate = async () => {
-		if (!videoFile || !textFile) {
+		const hasLibraryCode = Boolean(libraryCode.trim());
+		const needsBaseVideo = videoStrategy !== "context_switch";
+		if (!textFile || (needsBaseVideo && !videoFile && !hasLibraryCode)) {
 			setStatus("error");
-			setErrorMessage("Please upload both video and text files");
+			setErrorMessage(
+				needsBaseVideo
+					? "Please provide a text file and either upload a video or enter a library code."
+					: "Please provide a text file.",
+			);
 			setTimeout(() => setStatus(null), 3000);
 			return;
 		}
@@ -248,8 +299,10 @@ export default function CreateVideo() {
 			};
 
 			const formData = new FormData();
-			formData.append("library_code", "");
-			formData.append("background_video", videoFile);
+			formData.append("library_code", libraryCode.trim());
+			if (videoFile) {
+				formData.append("background_video", videoFile);
+			}
 			formData.append("script_file", textFile);
 			formData.append("tts_rate", String(ttsSpeed));
 			formData.append("text_color", subtitleTextColor);
@@ -260,6 +313,10 @@ export default function CreateVideo() {
 			formData.append("subtitle_preset", subtitlePreset);
 			formData.append("subtitle_template", subtitleTemplate);
 			formData.append("output_mode", outputMode);
+			formData.append("video_strategy", videoStrategy);
+			formData.append("category_hint", categoryHint.trim());
+			formData.append("context_scene_count", String(contextSceneCount));
+			formData.append("context_lock_category", "true");
 			formData.append("bgm_volume", (bgmVolume / 100).toFixed(2));
 			formData.append("bgm_ducking", bgmDucking ? "true" : "false");
 			if (bgmFile) {
@@ -391,6 +448,20 @@ export default function CreateVideo() {
 							</div>
 						</motion.div>
 					</div>
+
+					<motion.div className="space-y-2">
+						<label className="text-slate-300 font-semibold flex items-center gap-2">
+							<Video className="w-4 h-4 text-purple-400" />
+							Library Code (Optional)
+						</label>
+						<input
+							type="text"
+							value={libraryCode}
+							onChange={(e) => setLibraryCode(e.target.value)}
+							placeholder="Use this instead of uploading video (example: motivation_001)"
+							className="w-full rounded-xl border border-slate-700 bg-slate-800/60 px-4 py-3 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50"
+						/>
+					</motion.div>
 
 					{/* BGM Controls */}
 					<motion.div className="space-y-3">
@@ -578,6 +649,75 @@ export default function CreateVideo() {
 								Standard YouTube (16:9)
 							</button>
 						</div>
+					</motion.div>
+
+					<motion.div className="space-y-3">
+						<label className="text-slate-300 font-semibold flex items-center gap-2">
+							<Video className="w-4 h-4 text-purple-400" />
+							Video Strategy
+						</label>
+						<div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+							<button
+								type="button"
+								onClick={() => setVideoStrategy("single")}
+								className={`rounded-xl border px-4 py-3 text-sm font-medium transition ${
+									videoStrategy === "single"
+										? "border-purple-400 bg-purple-500/20 text-white"
+										: "border-slate-700 bg-slate-800/60 text-slate-300 hover:border-purple-500/70"
+								}`}
+							>
+								Single Video
+							</button>
+							<button
+								type="button"
+								onClick={() => setVideoStrategy("context_switch")}
+								className={`rounded-xl border px-4 py-3 text-sm font-medium transition ${
+									videoStrategy === "context_switch"
+										? "border-purple-400 bg-purple-500/20 text-white"
+										: "border-slate-700 bg-slate-800/60 text-slate-300 hover:border-purple-500/70"
+								}`}
+							>
+								Context Switch
+							</button>
+						</div>
+						{videoStrategy === "context_switch" ? (
+							<div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+								<div className="rounded-xl border border-slate-700 bg-slate-800/60 px-4 py-3">
+									<label className="text-xs text-slate-400 block mb-2">
+										Category Hint (optional)
+									</label>
+									<select
+										value={categoryHint}
+										onChange={(e) => setCategoryHint(e.target.value)}
+										className="w-full rounded-lg border border-slate-700 bg-slate-900/80 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50"
+									>
+										<option value="">Any Category</option>
+										{availableCategories.map((category) => (
+											<option key={category} value={category}>
+												{category}
+											</option>
+										))}
+									</select>
+								</div>
+								<div className="rounded-xl border border-slate-700 bg-slate-800/60 px-4 py-3">
+									<label className="text-xs text-slate-400 block mb-2">
+										Scene Count
+									</label>
+									<input
+										type="number"
+										min="1"
+										max="12"
+										value={contextSceneCount}
+										onChange={(e) =>
+											setContextSceneCount(
+												Math.max(1, Math.min(12, Number(e.target.value) || 6)),
+											)
+										}
+										className="w-full rounded-lg border border-slate-700 bg-slate-900/80 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-purple-500/50"
+									/>
+								</div>
+							</div>
+						) : null}
 					</motion.div>
 
 					<motion.div className="space-y-3">
