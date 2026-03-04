@@ -3,6 +3,7 @@
 AutoStoryTube is a **100% local** web app that turns a background video + story text into a narrated video with animated subtitles, then uploads it to YouTube using the official YouTube Data API v3.
 
 The YouTube upload flow supports all three post-processing features:
+
 - Thumbnail (manual upload or auto first-frame thumbnail)
 - Logo overlay (position + size)
 - End credits text on the final seconds of the video
@@ -18,32 +19,52 @@ Install these before running the app:
 - Node.js 18+ (includes `npm`)
 - FFmpeg (must be available on your `PATH`)
 
-## Quick start (React frontend)
+## Startup Guide (Single Port)
 
-The app uses a React frontend + FastAPI backend.
+Use this mode for normal usage: React frontend + FastAPI backend on one port (`8000`).
 
-1. Start the backend API (terminal 1):
-   - macOS/Linux: `./run.sh`
-   - Windows (PowerShell): `./run.ps1`
-   - First run: script creates `.venv` and installs Python dependencies automatically.
-2. Start the React frontend (terminal 2):
+### First run (new machine)
+
+1. Build frontend:
 
 ```bash
 cd frontend
 npm install
-npm run dev
+npm run build
+cd ..
 ```
 
-3. Later runs (frontend), you usually only need:
+2. Start backend:
+   - macOS/Linux: `./run.sh`
+   - Windows (PowerShell): `./run.ps1`
+
+3. Open: [http://localhost:8000](http://localhost:8000)
+
+Notes:
+
+- `run.sh` / `run.ps1` automatically creates `.venv` (if missing) and installs Python requirements.
+- FastAPI serves `frontend/dist` at `/` and API routes at `/api/*`.
+
+### later runs
+
+Usually only this is needed:
+
+- macOS/Linux: `./run.sh`
+- Windows (PowerShell): `./run.ps1`
+
+Then open [http://localhost:8000](http://localhost:8000).
+
+### If frontend code was changed
+
+Rebuild once before starting backend:
 
 ```bash
 cd frontend
-npm run dev
+npm run build
+cd ..
 ```
 
-4. Open the app at: [http://localhost:5173](http://localhost:5173)
-
-The Vite dev server proxies `/api` requests to `http://localhost:8000`.
+Then run `./run.sh` or `./run.ps1`.
 
 ---
 
@@ -113,6 +134,7 @@ AutoStoryTube/
 ### YouTube upload result fields
 
 `/api/youtube/upload` returns status fields so UI can report exactly what was applied:
+
 - `thumbnail_applied`, `thumbnail_source`, `thumbnail_error`
 - `logo_applied`, `logo_error`
 - `end_credits_applied`, `end_credits_error`
@@ -188,6 +210,7 @@ In the Bulk Upload page, enable `Generate + upload to YouTube` to process each
 Excel row and upload it directly to YouTube.
 
 Reusable branding packs are supported for both single and batch uploads:
+
 - Create/edit `data/branding_packs.json`
 - Set `default_pack` to enforce a consistent branding pack across all uploads
 - Use `branding_pack` in Excel rows or in YouTube Upload UI
@@ -275,6 +298,7 @@ Install Piper in your environment:
 ```bash
 pip install piper-tts
 ```
+
 ## Offline guarantee
 
 - All video processing is local using **FFmpeg**.

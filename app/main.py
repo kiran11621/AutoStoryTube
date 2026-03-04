@@ -30,6 +30,9 @@ os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
+FRONTEND_DIST_DIR = BASE_DIR / "frontend" / "dist"
+FRONTEND_INDEX_PATH = FRONTEND_DIST_DIR / "index.html"
+FRONTEND_ASSETS_DIR = FRONTEND_DIST_DIR / "assets"
 UPLOAD_DIR = DATA_DIR / "uploads"
 OUTPUT_DIR = DATA_DIR / "outputs"
 CREDENTIALS_DIR = DATA_DIR / "credentials"
@@ -498,6 +501,8 @@ def _post_process_voice(audio_path: Path, profile: dict[str, float]) -> None:
         processed_path.replace(audio_path)
 app = FastAPI()
 app.mount("/static", StaticFiles(directory=BASE_DIR / "app" / "static"), name="static")
+if FRONTEND_ASSETS_DIR.exists():
+    app.mount("/assets", StaticFiles(directory=FRONTEND_ASSETS_DIR), name="assets")
 
 templates = Jinja2Templates(directory=BASE_DIR / "app" / "templates")
 
@@ -514,6 +519,8 @@ async def generic_error_handler(request: Request, exc: Exception) -> JSONRespons
 
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request) -> HTMLResponse:
+    if FRONTEND_INDEX_PATH.exists():
+        return FileResponse(FRONTEND_INDEX_PATH)
     return templates.TemplateResponse("index.html", {"request": request})
 
 
@@ -4309,3 +4316,15 @@ def youtube_upload(
 @app.get("/api/status")
 def status() -> JSONResponse:
     return JSONResponse({"time": datetime.utcnow().isoformat()})
+
+
+@app.get("/{full_path:path}", response_class=HTMLResponse)
+def spa_fallback(full_path: str) -> HTMLResponse:
+    if full_path.startswith(("api/", "oauth2callback", "static/")):
+        raise HTTPException(status_code=404, detail="Not found")
+    if FRONTEND_INDEX_PATH.exists():
+        return FileResponse(FRONTEND_INDEX_PATH)
+    raise HTTPException(
+        status_code=404,
+        detail="Frontend build not found. Run `npm run build` in the `frontend` folder.",
+    )
