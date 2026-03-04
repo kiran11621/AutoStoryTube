@@ -1,0 +1,24 @@
+{
+  "default_pack": "default_branding",
+  "packs": [
+    {
+      "id": "default_branding",
+      "name": "Default Branding",
+      "logo_file": "brand_logo.png",
+      "logo_position": "top-right",
+      "logo_scale_percent": 15,
+      "logo_animated": true,
+      "intro_text": "Welcome to AutoStoryTube",
+      "intro_duration_sec": 3,
+      "subscribe_cta_text": "Subscribe for more",
+      "subscribe_cta_duration_sec": 5,
+      "subscribe_cta_from_end_sec": 12,
+      "end_screen_blocks": true,
+      "end_screen_duration_sec": 8,
+      "outro_text": "Thanks for watching",
+      "outro_duration_sec": 6,
+      "end_credits_text": "Subscribe for more stories",
+      "end_credits_duration_sec": 5
+    }
+  ]
+}

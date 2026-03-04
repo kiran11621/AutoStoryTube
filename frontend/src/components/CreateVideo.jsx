@@ -142,10 +142,16 @@ export default function CreateVideo() {
 			label: "Bounce/Fade",
 			description: "Scale pop with fade",
 		},
+		{
+			key: "beat_sync",
+			label: "Beat Sync",
+			description: "Rhythm pulses + keyword emphasis",
+		},
 	];
 	const [videoFile, setVideoFile] = useState(null);
 	const [textFile, setTextFile] = useState(null);
 	const [libraryCode, setLibraryCode] = useState("");
+	const [audioLibraryRef, setAudioLibraryRef] = useState("");
 	const [bgmFile, setBgmFile] = useState(null);
 	const [bgmVolume, setBgmVolume] = useState(18);
 	const [bgmDucking, setBgmDucking] = useState(true);
@@ -319,6 +325,7 @@ export default function CreateVideo() {
 			formData.append("context_lock_category", "true");
 			formData.append("bgm_volume", (bgmVolume / 100).toFixed(2));
 			formData.append("bgm_ducking", bgmDucking ? "true" : "false");
+			formData.append("audio_library_ref", audioLibraryRef.trim());
 			if (bgmFile) {
 				formData.append("bgm_file", bgmFile);
 			}
@@ -440,7 +447,7 @@ export default function CreateVideo() {
 									<span>BGM</span>
 								</div>
 								<p className="text-slate-300 text-sm font-semibold truncate">
-									{bgmFile ? bgmFile.name : "Optional MP3/WAV music"}
+									{bgmFile ? bgmFile.name : "Optional MP3/WAV music upload"}
 								</p>
 								<p className="text-slate-500 text-xs mt-1">
 									drag/drop or click to browse
@@ -460,6 +467,19 @@ export default function CreateVideo() {
 							onChange={(e) => setLibraryCode(e.target.value)}
 							placeholder="Use this instead of uploading video (example: motivation_001)"
 							className="w-full rounded-xl border border-slate-700 bg-slate-800/60 px-4 py-3 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50"
+						/>
+					</motion.div>
+					<motion.div className="space-y-2">
+						<label className="text-slate-300 font-semibold flex items-center gap-2">
+							<Mic className="w-4 h-4 text-emerald-400" />
+							Audio Library (Optional)
+						</label>
+						<input
+							type="text"
+							value={audioLibraryRef}
+							onChange={(e) => setAudioLibraryRef(e.target.value)}
+							placeholder="Use this instead of uploading BGM (code/title/filename)"
+							className="w-full rounded-xl border border-slate-700 bg-slate-800/60 px-4 py-3 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
 						/>
 					</motion.div>
 

@@ -64,7 +64,7 @@ AutoStoryTube/
 |       |-- components
 |       |   |-- CreateVideo.jsx         # single render flow
 |       |   |-- BulkUpload.jsx          # Excel batch flow
-|       |   `-- YoutubeUpload.jsx       # upload + thumbnail/logo/end credits
+|       |   `-- YoutubeUpload.jsx       # upload + thumbnail/logo/branding/end credits
 |       `-- pages
 |           `-- Dashboard.jsx
 |-- data
@@ -75,13 +75,18 @@ AutoStoryTube/
 |   |-- outputs                          # rendered videos and generated upload intermediates
 |   |-- logos                            # optional batch logo files
 |   |-- thumbnails                       # optional batch manual thumbnails
-|   |-- music                            # optional background music files
+|   |-- audio_library
+|   |   |-- catalog.json
+|   |   `-- README.md
 |   |-- scripts
 |   |   `-- README.md
 |   |-- uploads
 |   |-- video_library
 |   |   |-- catalog.json
 |   |   `-- README.md
+|   |-- branding_packs.json             # reusable branding presets
+|   |-- music                            # legacy/fallback background music folder
+|   |-- branding_packs.README.md
 |   `-- voices
 |       `-- piper
 |-- requirements.txt
@@ -144,18 +149,26 @@ Common optional columns:
 - thumbnail/branding (optional):
   - `thumbnail_mode` (`auto`, `manual`, `none`)
   - `thumbnail_file` (used when `thumbnail_mode=manual`, from `data/thumbnails`)
+  - `branding_pack` (reusable pack from `data/branding_packs.json`)
   - `logo_file` (from `data/logos`)
   - `logo_position` (`top-left`, `top-right`, `bottom-left`, `bottom-right`, `center`)
   - `logo_scale_percent` (`5`-`40`)
+  - `logo_animated` (`true`/`false`)
+  - `intro_text`, `intro_duration_sec`
+  - `subscribe_cta_text`, `subscribe_cta_duration_sec`, `subscribe_cta_from_end_sec`
+  - `end_screen_blocks`, `end_screen_duration_sec`
+  - `outro_text`, `outro_duration_sec`
   - `end_credits_text`
   - `end_credits_duration_sec`
 - background music (optional):
-  - `bgm_file` (filename from `data/music` or absolute path)
+  - `audio_library` (preferred: audio code/title/filename from `data/audio_library/catalog.json`)
+  - `audio_library_code`, `audio_name` (aliases)
+  - `bgm_file` (also supported: filename/path; resolves from `data/audio_library` first, then `data/music`)
   - `bgm_volume` (0.00 to 1.00, default `0.18`)
   - `bgm_ducking` (`true`/`false`, default `true`)
 - subtitle styling:
   - `subtitle_preset` (`classic`, `viral`, `reels`, `cinematic`)
-  - `subtitle_template` (`fade`, `bold_center`, `karaoke_word_by_word`, `bounce_fade`)
+  - `subtitle_template` (`fade`, `bold_center`, `karaoke_word_by_word`, `bounce_fade`, `beat_sync`)
   - `text_color` / `subtitle_text_color`
   - `bg_color` / `subtitle_bg_color`
   - `bold` / `subtitle_bold`
@@ -173,6 +186,12 @@ Upload UI (`Download Batch Template`).
 
 In the Bulk Upload page, enable `Generate + upload to YouTube` to process each
 Excel row and upload it directly to YouTube.
+
+Reusable branding packs are supported for both single and batch uploads:
+- Create/edit `data/branding_packs.json`
+- Set `default_pack` to enforce a consistent branding pack across all uploads
+- Use `branding_pack` in Excel rows or in YouTube Upload UI
+- Row/manual fields still override pack values
 
 - If a row has `publish_at` and `visibility` is `public` or `unlisted`, the upload is scheduled with YouTube `publishAt`.
 - If `visibility` is `private`, the upload remains private and `publish_at` is not applied.
