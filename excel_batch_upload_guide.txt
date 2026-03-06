@@ -1,0 +1,45 @@
+﻿1. Required in each row
+- video_code
+- Any one script source:
+  - video_script, or
+  - script_text, or
+  - script_file (txt filename from data/scripts)
+
+2. Fixed allowed values
+- visibility: public, private, unlisted
+- output_mode: youtube, shorts, reels, square
+- video_strategy: single, context_switch
+- voice_style: professional, casual, narrator, energetic, calm, dramatic
+- voice_gender: male, female
+- thumbnail_mode: auto, manual, none
+- logo_position: top-left, top-right, bottom-left, bottom-right, center
+- subtitle_preset: classic, viral, reels, cinematic
+- subtitle_template: fade, bold_center, karaoke_word_by_word, bounce_fade, beat_sync
+- subtitle_placement: top, middle, bottom
+
+3. Numeric limits
+- context_scene_count: 1-12 (default 6)
+- logo_scale_percent: 5-40 (default 15)
+- intro_duration_sec: 0-15
+- subscribe_cta_duration_sec: 2-20 (default 5)
+- subscribe_cta_from_end_sec: 2-120 (default 12)
+- end_screen_duration_sec: 2-20 (default 8)
+- outro_duration_sec: 0-20
+- end_credits_duration_sec: 2-30 (default 5)
+- bgm_volume: 0.00-1.00 (default 0.18)
+- tts_rate: 120-240 (default 175)
+
+4. Boolean fields
+- logo_animated, end_screen_blocks, bgm_ducking, subtitle_bold, subtitle_italic
+- Use true/false (also accepts yes/on/1 as true)
+
+5. Date-time rule
+- publish_at must be future ISO datetime (example: 2026-03-10T10:30)
+- If invalid/past, scheduling is ignored
+- If visibility=private, publish_at is not applied
+
+6. Quick behavior notes
+- video_strategy=single: one clip for full video
+- video_strategy=context_switch: scene-wise switching by script context
+- If context switching fails, it falls back to single clip
+- For background music, you can use audio_library or bgm_file, with optional bgm_volume and bgm_ducking controls
