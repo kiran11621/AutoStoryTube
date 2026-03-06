@@ -28,6 +28,7 @@ export default function YoutubeUpload() {
 		videoFile: null,
 		thumbnail: null,
 		logoFile: null,
+		brandingPack: "",
 		logoPosition: "top-right",
 		logoScalePercent: "15",
 		endCreditsText: "",
@@ -44,6 +45,7 @@ export default function YoutubeUpload() {
 	const [thumbnailStatus, setThumbnailStatus] = useState("");
 	const [thumbnailNotice, setThumbnailNotice] = useState("");
 	const [logoStatus, setLogoStatus] = useState("");
+	const [brandingStatus, setBrandingStatus] = useState("");
 	const [endCreditsStatus, setEndCreditsStatus] = useState("");
 	const [scheduleStatus, setScheduleStatus] = useState("");
 	const [shortsStatus, setShortsStatus] = useState("");
@@ -188,6 +190,7 @@ export default function YoutubeUpload() {
 		setThumbnailStatus("");
 		setThumbnailNotice("");
 		setLogoStatus("");
+		setBrandingStatus("");
 		setEndCreditsStatus("");
 		setScheduleStatus("");
 		setShortsStatus("");
@@ -212,6 +215,9 @@ export default function YoutubeUpload() {
 			payload.append("video_file", formData.videoFile);
 			if (formData.thumbnail) {
 				payload.append("thumbnail", formData.thumbnail);
+			}
+			if ((formData.brandingPack || "").trim()) {
+				payload.append("branding_pack", formData.brandingPack.trim());
 			}
 			if (formData.logoFile) {
 				payload.append("logo_file", formData.logoFile);
@@ -296,7 +302,14 @@ export default function YoutubeUpload() {
 					? "Logo: Applied to uploaded video"
 					: "Logo: Not applied",
 			);
-			if ((formData.endCreditsText || "").trim()) {
+			setBrandingStatus(
+				data.branding_applied
+					? `Branding Pack: Applied${data.branding_pack ? ` (${data.branding_pack})` : ""}`
+					: data.branding_pack
+						? `Branding Pack: Selected (${data.branding_pack})`
+						: "Branding Pack: Not applied",
+			);
+			if ((formData.endCreditsText || "").trim() || data.end_credits_applied || data.end_credits_error) {
 				setEndCreditsStatus(
 					data.end_credits_applied
 						? "End credits: Applied to video ending"
@@ -584,6 +597,17 @@ export default function YoutubeUpload() {
 								Logo Overlay (Optional)
 							</summary>
 							<div className="mt-3 rounded-xl border border-slate-700 bg-slate-900/60 p-4">
+								<div className="mb-4">
+									<label className="text-xs text-slate-400 mb-1 block">Branding Pack</label>
+									<input
+										type="text"
+										name="brandingPack"
+										value={formData.brandingPack}
+										onChange={handleInputChange}
+										placeholder="Reusable branding pack id/code (optional)"
+										className="w-full px-3 py-2 bg-slate-800/80 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500/70"
+									/>
+								</div>
 								<div className="grid grid-cols-1 md:grid-cols-3 gap-3">
 									<div>
 										<label className="text-xs text-slate-400 mb-1 block">Logo File</label>
@@ -682,6 +706,9 @@ export default function YoutubeUpload() {
 										<p className="text-emerald-100/90">{thumbnailStatus}</p>
 										{logoStatus ? (
 											<p className="text-emerald-100/90">{logoStatus}</p>
+										) : null}
+										{brandingStatus ? (
+											<p className="text-emerald-100/90">{brandingStatus}</p>
 										) : null}
 										{endCreditsStatus ? (
 											<p className="text-emerald-100/90">{endCreditsStatus}</p>

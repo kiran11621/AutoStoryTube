@@ -41,6 +41,10 @@ data/video_library/*
 !data/video_library/README.md
 !data/video_library/catalog.json
 !data/video_library/.gitkeep
+data/audio_library/*
+!data/audio_library/README.md
+!data/audio_library/catalog.json
+!data/audio_library/.gitkeep
 
 # Frontend local/build artifacts
 frontend/node_modules/

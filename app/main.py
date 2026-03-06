@@ -36,10 +36,13 @@ CREDENTIALS_DIR = DATA_DIR / "credentials"
 VIDEO_LIBRARY_DIR = DATA_DIR / "video_library"
 VIDEO_LIBRARY_CATALOG = VIDEO_LIBRARY_DIR / "catalog.json"
 VIDEO_LIBRARY_INDEX = VIDEO_LIBRARY_DIR / "video_index.json"
+AUDIO_LIBRARY_DIR = DATA_DIR / "audio_library"
+AUDIO_LIBRARY_CATALOG = AUDIO_LIBRARY_DIR / "catalog.json"
 SCRIPTS_DIR = DATA_DIR / "scripts"
 MUSIC_DIR = DATA_DIR / "music"
 LOGOS_DIR = DATA_DIR / "logos"
 THUMBNAILS_DIR = DATA_DIR / "thumbnails"
+BRANDING_FILE = DATA_DIR / "branding_packs.json"
 VOICES_DIR = DATA_DIR / "voices"
 PIPER_VOICES_DIR = VOICES_DIR / "piper"
 TOKEN_PATH = CREDENTIALS_DIR / "token.json"
@@ -49,6 +52,7 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 CREDENTIALS_DIR.mkdir(parents=True, exist_ok=True)
 VIDEO_LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
+AUDIO_LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
 SCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
 MUSIC_DIR.mkdir(parents=True, exist_ok=True)
 LOGOS_DIR.mkdir(parents=True, exist_ok=True)
@@ -129,6 +133,7 @@ SUBTITLE_ASS_TEMPLATES = {
     "bold_center": "bold_center",
     "karaoke_word_by_word": "karaoke_word_by_word",
     "bounce_fade": "bounce_fade",
+    "beat_sync": "beat_sync",
 }
 VOICE_MODEL_MATRIX = {
     "professional": {
@@ -416,6 +421,12 @@ def _resolve_subtitle_template(template_name: str | None) -> str:
         "bouncefade": "bounce_fade",
         "bounce/fade": "bounce_fade",
         "bounce fade": "bounce_fade",
+        "beat": "beat_sync",
+        "beat_sync": "beat_sync",
+        "beat sync": "beat_sync",
+        "rhythm": "beat_sync",
+        "rhythm_sync": "beat_sync",
+        "rhythm sync": "beat_sync",
     }
     template_key = aliases.get(template_key, template_key)
     if template_key not in SUBTITLE_ASS_TEMPLATES:
@@ -516,6 +527,16 @@ def library_categories() -> JSONResponse:
     return JSONResponse({"categories": _available_context_categories()})
 
 
+@app.get("/api/audio-library")
+def audio_library_catalog() -> JSONResponse:
+    return JSONResponse({"audio": _load_audio_catalog()})
+
+
+@app.get("/api/branding-packs")
+def branding_packs() -> JSONResponse:
+    return JSONResponse({"packs": _load_branding_packs()})
+
+
 def _run_ffmpeg(command: list[str]) -> None:
     process = subprocess.run(command, capture_output=True, text=True)
     if process.returncode != 0:
@@ -551,6 +572,7 @@ def _apply_logo_overlay_to_video(
     output_path: Path,
     logo_position: str,
     logo_scale_percent: int,
+    logo_animated: bool = False,
 ) -> None:
     position_map = {
         "top-left": "20:20",
@@ -561,10 +583,17 @@ def _apply_logo_overlay_to_video(
     }
     overlay_expr = position_map.get(logo_position, position_map["top-right"])
     scale_factor = max(5, min(40, logo_scale_percent)) / 100.0
-    filter_complex = (
-        f"[1:v][0:v]scale2ref=w=iw*{scale_factor:.4f}:h=ow/mdar[logo][base];"
-        f"[base][logo]overlay={overlay_expr}[v]"
-    )
+    if logo_animated:
+        filter_complex = (
+            f"[1:v][0:v]scale2ref=w=iw*{scale_factor:.4f}:h=ow/mdar[logo][base];"
+            "[logo]format=rgba,fade=t=in:st=0:d=1.2:alpha=1[logoa];"
+            f"[base][logoa]overlay={overlay_expr}[v]"
+        )
+    else:
+        filter_complex = (
+            f"[1:v][0:v]scale2ref=w=iw*{scale_factor:.4f}:h=ow/mdar[logo][base];"
+            f"[base][logo]overlay={overlay_expr}[v]"
+        )
     command = [
         "ffmpeg",
         "-y",
@@ -702,6 +731,119 @@ def _apply_end_credits_to_video(
     _run_ffmpeg(command)
 
 
+def _apply_branding_overlays_to_video(
+    video_path: Path,
+    output_path: Path,
+    *,
+    intro_text: str = "",
+    intro_duration_sec: int = 0,
+    outro_text: str = "",
+    outro_duration_sec: int = 0,
+    subscribe_cta_text: str = "",
+    subscribe_cta_duration_sec: int = 5,
+    subscribe_cta_from_end_sec: int = 12,
+    end_screen_blocks: bool = False,
+    end_screen_duration_sec: int = 8,
+) -> None:
+    duration = _video_duration_seconds(video_path)
+    vf_parts: list[str] = []
+
+    intro_text_value = str(intro_text or "").strip()
+    if intro_text_value and int(intro_duration_sec or 0) > 0:
+        intro_seconds = max(1, min(15, int(intro_duration_sec)))
+        escaped_intro = _ffmpeg_drawtext_escape(intro_text_value)
+        vf_parts.append(
+            "drawbox=x=0:y=0:w=iw:h=ih:color=black@0.40:t=fill:"
+            f"enable='between(t,0,{float(intro_seconds):.3f})'"
+        )
+        vf_parts.append(
+            f"drawtext=text='{escaped_intro}':fontcolor=white:fontsize=54:"
+            f"x=(w-text_w)/2:y=h*0.12:enable='between(t,0,{float(intro_seconds):.3f})'"
+        )
+
+    cta_text = str(subscribe_cta_text or "").strip()
+    if cta_text:
+        cta_duration = max(2, min(20, int(subscribe_cta_duration_sec or 5)))
+        cta_from_end = max(2, min(120, int(subscribe_cta_from_end_sec or 12)))
+        cta_start = max(0.0, duration - float(cta_from_end))
+        cta_end = min(duration, cta_start + float(cta_duration))
+        escaped_cta = _ffmpeg_drawtext_escape(cta_text)
+        vf_parts.append(
+            "drawbox=x=(w*0.22):y=(h*0.78):w=(w*0.56):h=84:color=red@0.75:t=fill:"
+            f"enable='between(t,{cta_start:.3f},{cta_end:.3f})'"
+        )
+        vf_parts.append(
+            f"drawtext=text='{escaped_cta}':fontcolor=white:fontsize=42:"
+            f"x=(w-text_w)/2:y=h*0.81:enable='between(t,{cta_start:.3f},{cta_end:.3f})'"
+        )
+
+    end_duration = max(2, min(20, int(end_screen_duration_sec or 8)))
+    end_start = max(0.0, duration - float(end_duration))
+    if _to_bool(end_screen_blocks, default=False):
+        vf_parts.append(
+            "drawbox=x=0:y=0:w=iw:h=ih:color=black@0.20:t=fill:"
+            f"enable='gte(t,{end_start:.3f})'"
+        )
+        vf_parts.append(
+            "drawbox=x=w*0.08:y=h*0.18:w=w*0.38:h=h*0.42:color=white@0.20:t=3:"
+            f"enable='gte(t,{end_start:.3f})'"
+        )
+        vf_parts.append(
+            "drawbox=x=w*0.54:y=h*0.18:w=w*0.38:h=h*0.42:color=white@0.20:t=3:"
+            f"enable='gte(t,{end_start:.3f})'"
+        )
+        vf_parts.append(
+            "drawbox=x=w*0.32:y=h*0.68:w=w*0.36:h=h*0.20:color=white@0.20:t=3:"
+            f"enable='gte(t,{end_start:.3f})'"
+        )
+        vf_parts.append(
+            "drawtext=text='Watch Next':fontcolor=white:fontsize=30:"
+            f"x=w*0.16:y=h*0.22:enable='gte(t,{end_start:.3f})'"
+        )
+        vf_parts.append(
+            "drawtext=text='Recommended':fontcolor=white:fontsize=30:"
+            f"x=w*0.60:y=h*0.22:enable='gte(t,{end_start:.3f})'"
+        )
+        vf_parts.append(
+            "drawtext=text='SUBSCRIBE':fontcolor=white:fontsize=34:"
+            f"x=(w-text_w)/2:y=h*0.75:enable='gte(t,{end_start:.3f})'"
+        )
+
+    outro_text_value = str(outro_text or "").strip()
+    if outro_text_value and int(outro_duration_sec or 0) > 0:
+        outro_seconds = max(1, min(20, int(outro_duration_sec)))
+        outro_start = max(0.0, duration - float(outro_seconds))
+        escaped_outro = _ffmpeg_drawtext_escape(outro_text_value)
+        vf_parts.append(
+            "drawbox=x=0:y=0:w=iw:h=ih:color=black@0.50:t=fill:"
+            f"enable='between(t,{outro_start:.3f},{duration:.3f})'"
+        )
+        vf_parts.append(
+            f"drawtext=text='{escaped_outro}':fontcolor=white:fontsize=52:"
+            f"x=(w-text_w)/2:y=h*0.10:enable='between(t,{outro_start:.3f},{duration:.3f})'"
+        )
+
+    if not vf_parts:
+        shutil.copyfile(video_path, output_path)
+        return
+    command = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(video_path),
+        "-vf",
+        ",".join(vf_parts),
+        "-c:v",
+        "libx264",
+        "-c:a",
+        "copy",
+        "-movflags",
+        "+faststart",
+        str(output_path),
+    ]
+    _run_ffmpeg(command)
+
+
 def _prepare_video_for_shorts(
     video_path: Path,
     output_path: Path,
@@ -780,6 +922,107 @@ def _load_video_catalog() -> list[dict[str, str]]:
     except json.JSONDecodeError:
         return []
     return [entry for entry in entries if isinstance(entry, dict)]
+
+
+def _load_audio_catalog() -> list[dict[str, str]]:
+    entries: list[dict[str, str]] = []
+    if AUDIO_LIBRARY_CATALOG.exists():
+        try:
+            loaded = json.loads(AUDIO_LIBRARY_CATALOG.read_text(encoding="utf-8-sig"))
+            if isinstance(loaded, list):
+                for entry in loaded:
+                    if not isinstance(entry, dict):
+                        continue
+                    filename = str(entry.get("filename") or "").strip()
+                    if not filename:
+                        continue
+                    candidate = AUDIO_LIBRARY_DIR / filename
+                    if not candidate.exists() or not candidate.is_file():
+                        continue
+                    entries.append(
+                        {
+                            "code": str(entry.get("code") or "").strip(),
+                            "title": str(entry.get("title") or "").strip(),
+                            "filename": filename,
+                        }
+                    )
+        except json.JSONDecodeError:
+            entries = []
+    if entries:
+        return entries
+
+    # Fallback: auto-index supported audio files when catalog is missing.
+    discovered: list[dict[str, str]] = []
+    for candidate in AUDIO_LIBRARY_DIR.rglob("*"):
+        if (
+            not candidate.is_file()
+            or candidate.suffix.lower() not in {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg"}
+        ):
+            continue
+        relative = candidate.relative_to(AUDIO_LIBRARY_DIR).as_posix()
+        stem = candidate.stem.replace("_", " ").replace("-", " ").strip()
+        discovered.append({"code": candidate.stem, "title": stem, "filename": relative})
+    discovered.sort(key=lambda item: str(item.get("filename") or "").lower())
+    return discovered
+
+
+def _load_branding_config() -> dict:
+    if not BRANDING_FILE.exists():
+        return {}
+    try:
+        loaded = json.loads(BRANDING_FILE.read_text(encoding="utf-8-sig"))
+    except json.JSONDecodeError:
+        return {}
+    return loaded if isinstance(loaded, dict) else {"packs": loaded}
+
+
+def _load_branding_packs() -> list[dict]:
+    loaded = _load_branding_config()
+    if isinstance(loaded, dict):
+        candidate_packs = loaded.get("packs")
+        if isinstance(candidate_packs, list):
+            return [p for p in candidate_packs if isinstance(p, dict)]
+        return []
+    if isinstance(loaded, list):
+        return [p for p in loaded if isinstance(p, dict)]
+    return []
+
+
+def _default_branding_pack() -> dict | None:
+    config = _load_branding_config()
+    packs = _load_branding_packs()
+    if not packs:
+        return None
+    default_ref = str(config.get("default_pack") or "").strip().lower() if isinstance(config, dict) else ""
+    if default_ref:
+        for pack in packs:
+            keys = {
+                str(pack.get("id") or "").strip().lower(),
+                str(pack.get("code") or "").strip().lower(),
+                str(pack.get("name") or "").strip().lower(),
+            }
+            if default_ref in keys:
+                return pack
+    for pack in packs:
+        if str(pack.get("id") or "").strip().lower() == "default_branding":
+            return pack
+    return packs[0]
+
+
+def _branding_pack_by_reference(reference: object) -> dict | None:
+    ref = str(reference or "").strip().lower()
+    if not ref:
+        return None
+    for pack in _load_branding_packs():
+        keys = {
+            str(pack.get("id") or "").strip().lower(),
+            str(pack.get("code") or "").strip().lower(),
+            str(pack.get("name") or "").strip().lower(),
+            str(pack.get("title") or "").strip().lower(),
+        }
+        if ref in keys:
+            return pack
+    return None
 
 
 def _normalize_category(value: object) -> str:
@@ -1485,6 +1728,26 @@ def _library_video_by_reference(reference: str) -> tuple[Path, dict] | None:
     return None
 
 
+def _library_audio_by_reference(reference: str) -> tuple[Path, dict] | None:
+    ref = str(reference or "").strip().lower()
+    if not ref:
+        return None
+    for entry in _load_audio_catalog():
+        filename = str(entry.get("filename") or "").strip()
+        if not filename:
+            continue
+        candidate = AUDIO_LIBRARY_DIR / filename
+        if not candidate.exists() or not candidate.is_file():
+            continue
+        code = str(entry.get("code") or "").strip().lower()
+        title = str(entry.get("title") or "").strip().lower()
+        base = Path(filename).stem.lower()
+        full = filename.lower()
+        if ref in {code, title, base, full}:
+            return candidate, entry
+    return None
+
+
 def _load_script_from_excel(excel_path: Path, video_code: str) -> str | None:
     workbook = load_workbook(filename=excel_path, read_only=True, data_only=True)
     sheet = workbook.active
@@ -1698,6 +1961,125 @@ def _estimate_word_syllables(word: str) -> int:
     return max(1, count)
 
 
+def _tokenize_subtitle_words(line: str) -> list[tuple[str, str]]:
+    tokens = [token for token in re.split(r"\s+", str(line or "").strip()) if token]
+    pairs: list[tuple[str, str]] = []
+    for token in tokens:
+        normalized = re.sub(r"(^[^a-z0-9']+|[^a-z0-9']+$)", "", token.lower())
+        pairs.append((token, normalized))
+    return pairs
+
+
+def _subtitle_keyword_set(text: str, max_keywords: int = 14) -> set[str]:
+    counts: dict[str, int] = {}
+    for token in re.findall(r"[a-z0-9']+", str(text or "").lower()):
+        if len(token) < 4:
+            continue
+        if token in {
+            "that",
+            "this",
+            "with",
+            "from",
+            "your",
+            "have",
+            "will",
+            "just",
+            "they",
+            "them",
+            "then",
+            "when",
+            "what",
+            "where",
+            "there",
+            "would",
+            "could",
+            "about",
+            "into",
+            "while",
+            "because",
+            "video",
+        }:
+            continue
+        counts[token] = counts.get(token, 0) + 1
+    ranked = sorted(counts.items(), key=lambda item: (-item[1], -len(item[0]), item[0]))
+    return {token for token, _ in ranked[:max_keywords]}
+
+
+def _ass_primary_color_override(hex_color: str) -> str:
+    value = str(hex_color or "").strip().lstrip("#")
+    if len(value) != 6:
+        value = "FFD35A"
+    rr = value[0:2]
+    gg = value[2:4]
+    bb = value[4:6]
+    return f"&H{bb}{gg}{rr}&".upper()
+
+
+def _beat_sync_word_durations_cs(
+    words: list[tuple[str, str]],
+    segment_duration: float,
+) -> list[int]:
+    if not words:
+        return []
+    total_cs = max(1, int(round(max(0.45, segment_duration) * 100)))
+    weights: list[float] = []
+    for raw_word, normalized_word in words:
+        base = float(_estimate_word_syllables(normalized_word or raw_word))
+        # Tiny punctuation pause so emphatic words can pop on-beat.
+        if re.search(r"[,.!?;:]$", raw_word):
+            base += 0.35
+        weights.append(max(0.5, base))
+    total_weight = sum(weights) or float(len(words))
+    durations = [max(1, int(round(total_cs * (w / total_weight)))) for w in weights]
+    delta = total_cs - sum(durations)
+    durations[-1] = max(1, durations[-1] + delta)
+    return durations
+
+
+def _build_beat_sync_dialogue(
+    line: str,
+    segment_duration: float,
+    *,
+    line_index: int,
+    keyword_set: set[str],
+    emphasis_color: str,
+) -> str:
+    words = _tokenize_subtitle_words(line)
+    if not words:
+        return str(line or "").replace("{", "\\{").replace("}", "\\}")
+    durations_cs = _beat_sync_word_durations_cs(words, segment_duration)
+    parts: list[str] = []
+    accent = _ass_primary_color_override(emphasis_color)
+    for idx, ((raw_word, normalized_word), word_cs) in enumerate(zip(words, durations_cs)):
+        safe_word = raw_word.replace("{", "\\{").replace("}", "\\}")
+        is_keyword = normalized_word in keyword_set
+        looks_important = (
+            len(normalized_word) >= 8
+            or re.search(r"\d", normalized_word or "")
+            or str(raw_word).isupper()
+        )
+        is_emphasis = is_keyword or looks_important
+        # Rhythm pulse every 2-3 words to feel edited without overwhelming readability.
+        has_pulse = ((idx + line_index) % 3 == 0) or ((idx + line_index) % 2 == 0 and is_emphasis)
+        if is_emphasis:
+            tag = (
+                f"{{\\k{word_cs}\\1c{accent}\\bord3"
+                "\\t(0,95,\\fscx132\\fscy132)"
+                "\\t(95,215,\\fscx100\\fscy100)}"
+            )
+        elif has_pulse:
+            tag = (
+                f"{{\\k{word_cs}"
+                "\\t(0,80,\\fscx114\\fscy114)"
+                "\\t(80,175,\\fscx100\\fscy100)}"
+            )
+        else:
+            tag = f"{{\\k{word_cs}}}"
+        separator = " " if idx < len(words) - 1 else ""
+        parts.append(f"{tag}{safe_word}{separator}")
+    return "".join(parts)
+
+
 def _subtitle_segment_weights(segments: list[str]) -> list[float]:
     weights: list[float] = []
     for segment in segments:
@@ -1846,6 +2228,11 @@ def _build_ass_subtitles(
         outline = max(outline, 2)
         shadow = 0
         margin_v = max(42, int(margin_v * 0.65))
+    elif subtitle_template == "beat_sync":
+        outline = max(outline, 2)
+        shadow = max(shadow, 1)
+        font_size = max(font_size, 52)
+        margin_v = max(42, int(margin_v * 0.72))
 
     style_line = _build_ass_style_line(
         text_color,
@@ -1876,8 +2263,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
 
     events = []
+    beat_keywords = _subtitle_keyword_set(text) if subtitle_template == "beat_sync" else set()
     start_time = 0.0
-    for line, segment_duration in zip(lines, segment_durations):
+    for line_index, (line, segment_duration) in enumerate(zip(lines, segment_durations)):
         end_time = start_time + max(0.08, segment_duration)
         start_stamp = _format_ass_time(start_time)
         end_stamp = _format_ass_time(end_time)
@@ -1908,6 +2296,14 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     separator = " " if idx < len(words) - 1 else ""
                     parts.append(f"{{\\k{word_cs}}}{safe_word}{separator}")
                 dialogue_text = "".join(parts)
+        elif subtitle_template == "beat_sync":
+            dialogue_text = _build_beat_sync_dialogue(
+                line,
+                segment_duration,
+                line_index=line_index,
+                keyword_set=beat_keywords,
+                emphasis_color="#FFD35A",
+            )
         events.append(
             f"Dialogue: 0,{start_stamp},{end_stamp},Default,,0,0,0,,{dialogue_text}"
         )
@@ -1961,28 +2357,53 @@ def _resolve_bgm_volume(value: object, default: float = 0.18) -> float:
     return max(0.0, min(1.0, parsed))
 
 
-def _resolve_batch_bgm_path(row: dict) -> Path | None:
-    reference = str(
-        row.get("bgm_file")
-        or row.get("bgm_track")
-        or row.get("background_music")
-        or row.get("music_file")
-        or ""
-    ).strip()
-    if not reference:
+def _resolve_bgm_reference(reference: object) -> Path | None:
+    ref = str(reference or "").strip()
+    if not ref:
         return None
-
-    candidate = Path(reference)
+    audio_match = _library_audio_by_reference(ref)
+    if audio_match:
+        return audio_match[0]
+    candidate = Path(ref)
     if candidate.exists() and candidate.is_file():
         return candidate
-
-    safe_name = _safe_filename(reference)
+    safe_name = _safe_filename(ref)
     if not safe_name:
         return None
+    audio_candidate = AUDIO_LIBRARY_DIR / safe_name
+    if audio_candidate.exists() and audio_candidate.is_file():
+        return audio_candidate
     local_candidate = MUSIC_DIR / safe_name
     if local_candidate.exists() and local_candidate.is_file():
         return local_candidate
     return None
+
+
+def _row_audio_reference(row: dict) -> str:
+    for key in (
+        "audio_library",
+        "audio_library_code",
+        "bgm_library",
+        "bgm_library_code",
+        "audio_code",
+        "audio_name",
+        "audio_filename",
+        "bgm_file",
+        "bgm_track",
+        "background_music",
+        "music_file",
+    ):
+        value = row.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return ""
+
+
+def _resolve_batch_bgm_path(row: dict) -> Path | None:
+    reference = _row_audio_reference(row)
+    if not reference:
+        return None
+    return _resolve_bgm_reference(reference)
 
 
 def _resolve_batch_asset_path(
@@ -2003,6 +2424,36 @@ def _resolve_batch_asset_path(
         if local_candidate.exists() and local_candidate.is_file():
             return local_candidate
     return None
+
+
+def _row_branding_reference(row: dict) -> str:
+    for key in ("branding_pack", "branding_pack_id", "brand_pack", "brand_code"):
+        value = row.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return ""
+
+
+def _coerce_int(value: object, default: int, min_value: int, max_value: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(min_value, min(max_value, parsed))
+
+
+def _branding_value(
+    row: dict, pack: dict | None, keys: tuple[str, ...], default: object = ""
+) -> object:
+    for key in keys:
+        value = row.get(key)
+        if value is not None and str(value).strip() != "":
+            return value
+    if pack is not None:
+        for key in keys:
+            if key in pack and pack.get(key) is not None and str(pack.get(key)).strip() != "":
+                return pack.get(key)
+    return default
 
 
 def _build_bgm_audio_filter_chain(
@@ -2460,6 +2911,7 @@ def _process_one_batch_row(row: dict) -> dict:
         "context_scene_categories": context_scene_categories,
         "context_scene_clips": context_scene_clips,
         "bgm_enabled": bool(bgm_path),
+        "audio_library_ref": _row_audio_reference(row) if bgm_path else "",
         "bgm_ducking": bgm_ducking if bgm_path else False,
         "bgm_volume": bgm_volume if bgm_path else 0.0,
     }
@@ -2473,6 +2925,7 @@ def process_video(
     background_video: UploadFile | None = File(None),
     script_file: UploadFile | None = File(None),
     bgm_file: UploadFile | None = File(None),
+    audio_library_ref: str = Form(""),
     library_code: str = Form(""),
     script_excel: UploadFile | None = File(None),
     tts_rate: int = Form(175),
@@ -2573,6 +3026,13 @@ def process_video(
         bgm_path = UPLOAD_DIR / f"{job_id}_{_safe_filename(bgm_file.filename)}"
         with bgm_path.open("wb") as bgm_buffer:
             shutil.copyfileobj(bgm_file.file, bgm_buffer)
+    elif audio_library_ref and str(audio_library_ref).strip():
+        bgm_path = _resolve_bgm_reference(audio_library_ref)
+        if bgm_path is None:
+            return JSONResponse(
+                {"error": f"Audio library track not found: {str(audio_library_ref).strip()}"},
+                status_code=400,
+            )
 
     duration = _audio_duration_seconds(voice_path)
     source_video_path = video_path
@@ -2762,6 +3222,7 @@ def process_video(
         "context_scene_categories": context_scene_categories,
         "context_scene_clips": context_scene_clips,
         "bgm_enabled": bool(bgm_path),
+        "audio_library_ref": str(audio_library_ref or "").strip() if bgm_path else "",
         "bgm_ducking": bgm_ducking_value if bgm_path else False,
         "bgm_volume": bgm_volume_value if bgm_path else 0.0,
     }
@@ -2806,12 +3267,26 @@ def batch_schema() -> JSONResponse:
                 {"key": "voice_type", "description": "Optional pyttsx3 voice id/name override."},
                 {"key": "thumbnail_mode", "description": "Optional: auto, manual, or none."},
                 {"key": "thumbnail_file", "description": "Optional when thumbnail_mode=manual. Filename in data/thumbnails (or absolute path)."},
+                {"key": "branding_pack", "description": "Optional reusable branding pack id/code/name from data/branding_packs.json."},
                 {"key": "logo_file", "description": "Optional logo image filename in data/logos (or absolute path)."},
                 {"key": "logo_position", "description": "Optional: top-left, top-right, bottom-left, bottom-right, center."},
                 {"key": "logo_scale_percent", "description": "Optional logo size percent (5-40), default 15."},
+                {"key": "logo_animated", "description": "Optional true/false. If true, logo fades in."},
+                {"key": "intro_text", "description": "Optional intro branding text overlay."},
+                {"key": "intro_duration_sec", "description": "Optional intro overlay duration (1-15)."},
+                {"key": "subscribe_cta_text", "description": "Optional CTA text, e.g. Subscribe for more."},
+                {"key": "subscribe_cta_duration_sec", "description": "Optional CTA duration (2-20)."},
+                {"key": "subscribe_cta_from_end_sec", "description": "Optional CTA start offset from end (2-120)."},
+                {"key": "end_screen_blocks", "description": "Optional true/false to draw reusable end-screen placeholders."},
+                {"key": "end_screen_duration_sec", "description": "Optional end-screen block duration (2-20)."},
+                {"key": "outro_text", "description": "Optional outro branding text overlay."},
+                {"key": "outro_duration_sec", "description": "Optional outro overlay duration (1-20)."},
                 {"key": "end_credits_text", "description": "Optional outro/end credits text."},
                 {"key": "end_credits_duration_sec", "description": "Optional end credits duration (2-30), default 5."},
-                {"key": "bgm_file", "description": "Optional music filename from data/music (or absolute path)."},
+                {"key": "audio_library", "description": "Optional audio library selector (code/title/filename from data/audio_library/catalog.json)."},
+                {"key": "audio_library_code", "description": "Optional alias for audio_library (catalog code)."},
+                {"key": "audio_name", "description": "Optional alias for audio_library (catalog title or filename stem)."},
+                {"key": "bgm_file", "description": "Optional music filename or path. Supports data/audio_library (catalog/fallback) and data/music."},
                 {"key": "bgm_volume", "description": "Optional music volume 0.00-1.00 (default 0.18)."},
                 {"key": "bgm_ducking", "description": "Optional true/false to auto-lower music during speech (default true)."},
                 {"key": "text_color", "description": "Subtitle text color, e.g. #FFFFFF (alias: font_color)."},
@@ -2819,7 +3294,7 @@ def batch_schema() -> JSONResponse:
                 {"key": "bold", "description": "true/false."},
                 {"key": "italic", "description": "true/false."},
                 {"key": "subtitle_preset", "description": "classic, viral, reels, or cinematic."},
-                {"key": "subtitle_template", "description": "Optional: fade, bold_center, karaoke_word_by_word, or bounce_fade."},
+                {"key": "subtitle_template", "description": "Optional: fade, bold_center, karaoke_word_by_word, bounce_fade, or beat_sync."},
                 {"key": "alignment", "description": "ASS alignment 1-9 (Create Video style)."},
                 {"key": "placement", "description": "Alias for alignment: top, middle, or bottom."},
                 {"key": "tts_rate", "description": "Speech rate (120-240), default 175."},
@@ -2851,11 +3326,23 @@ def batch_template() -> StreamingResponse:
         "voice_gender",
         "thumbnail_mode",
         "thumbnail_file",
+        "branding_pack",
         "logo_file",
         "logo_position",
         "logo_scale_percent",
+        "logo_animated",
+        "intro_text",
+        "intro_duration_sec",
+        "subscribe_cta_text",
+        "subscribe_cta_duration_sec",
+        "subscribe_cta_from_end_sec",
+        "end_screen_blocks",
+        "end_screen_duration_sec",
+        "outro_text",
+        "outro_duration_sec",
         "end_credits_text",
         "end_credits_duration_sec",
+        "audio_library",
         "bgm_file",
         "bgm_volume",
         "bgm_ducking",
@@ -2885,11 +3372,23 @@ def batch_template() -> StreamingResponse:
         "male",
         "auto",
         "",
+        "default_branding",
         "",
         "top-right",
         "15",
+        "true",
+        "Welcome to AutoStoryTube",
+        "3",
+        "Subscribe for more",
+        "5",
+        "12",
+        "true",
+        "8",
+        "Thanks for watching",
+        "6",
         "",
         "5",
+        "sample_music",
         "sample_music.mp3",
         "0.18",
         "true",
@@ -2909,10 +3408,10 @@ def batch_template() -> StreamingResponse:
     subtitle_template_col_letter = chr(64 + subtitle_template_col)
     subtitle_template_validation = DataValidation(
         type="list",
-        formula1='"fade,bold_center,karaoke_word_by_word,bounce_fade"',
+        formula1='"fade,bold_center,karaoke_word_by_word,bounce_fade,beat_sync"',
         allow_blank=True,
     )
-    subtitle_template_validation.error = "Use one of: fade, bold_center, karaoke_word_by_word, bounce_fade."
+    subtitle_template_validation.error = "Use one of: fade, bold_center, karaoke_word_by_word, bounce_fade, beat_sync."
     subtitle_template_validation.errorTitle = "Invalid subtitle_template"
     subtitle_template_validation.prompt = "Optional subtitle animation preset."
     subtitle_template_validation.promptTitle = "subtitle_template"
@@ -3058,26 +3557,56 @@ def process_batch_youtube(excel_file: UploadFile = File(...)) -> JSONResponse:
             working_video_path = upload_video_path
             logo_applied = False
             logo_error = None
+            branding_applied = False
+            branding_error = None
+            branding_pack_used = ""
             end_credits_applied = False
             end_credits_error = None
+
+            branding_pack = _branding_pack_by_reference(_row_branding_reference(row))
+            if branding_pack is None:
+                branding_pack = _default_branding_pack()
+            if branding_pack:
+                branding_pack_used = str(
+                    branding_pack.get("id")
+                    or branding_pack.get("code")
+                    or branding_pack.get("name")
+                    or ""
+                ).strip()
 
             logo_path = _resolve_batch_asset_path(
                 row,
                 ("logo_file", "logo_path", "batch_logo_file"),
                 LOGOS_DIR,
             )
+            if logo_path is None and branding_pack is not None:
+                logo_reference = _branding_value(
+                    row, branding_pack, ("logo_file", "logo_path"), ""
+                )
+                logo_path = _resolve_batch_asset_path(
+                    {"logo_file": logo_reference},
+                    ("logo_file",),
+                    LOGOS_DIR,
+                )
             if logo_path:
-                raw_logo_position = str(row.get("logo_position") or "top-right").strip().lower()
+                raw_logo_position = str(
+                    _branding_value(row, branding_pack, ("logo_position",), "top-right")
+                ).strip().lower()
                 logo_position = (
                     raw_logo_position
                     if raw_logo_position in {"top-left", "top-right", "bottom-left", "bottom-right", "center"}
                     else "top-right"
                 )
-                try:
-                    logo_scale_percent = int(row.get("logo_scale_percent") or 15)
-                except (TypeError, ValueError):
-                    logo_scale_percent = 15
-                logo_scale_percent = max(5, min(40, logo_scale_percent))
+                logo_scale_percent = _coerce_int(
+                    _branding_value(row, branding_pack, ("logo_scale_percent",), 15),
+                    default=15,
+                    min_value=5,
+                    max_value=40,
+                )
+                logo_animated = _to_bool(
+                    _branding_value(row, branding_pack, ("logo_animated",), False),
+                    default=False,
+                )
                 logo_output_path = OUTPUT_DIR / f"{generated.get('job_id')}_batch_logo.mp4"
                 try:
                     _apply_logo_overlay_to_video(
@@ -3086,24 +3615,113 @@ def process_batch_youtube(excel_file: UploadFile = File(...)) -> JSONResponse:
                         output_path=logo_output_path,
                         logo_position=logo_position,
                         logo_scale_percent=logo_scale_percent,
+                        logo_animated=logo_animated,
                     )
                     working_video_path = logo_output_path
                     logo_applied = True
                 except Exception as logo_exc:
                     logo_error = str(logo_exc)
 
+            intro_text = str(
+                _branding_value(row, branding_pack, ("intro_text", "intro_title"), "")
+            ).strip()
+            intro_duration_sec = _coerce_int(
+                _branding_value(row, branding_pack, ("intro_duration_sec",), 0),
+                default=0,
+                min_value=0,
+                max_value=15,
+            )
+            outro_text = str(
+                _branding_value(row, branding_pack, ("outro_text", "outro_title"), "")
+            ).strip()
+            outro_duration_sec = _coerce_int(
+                _branding_value(row, branding_pack, ("outro_duration_sec",), 0),
+                default=0,
+                min_value=0,
+                max_value=20,
+            )
+            subscribe_cta_text = str(
+                _branding_value(
+                    row,
+                    branding_pack,
+                    ("subscribe_cta_text", "cta_text", "subscribe_text"),
+                    "",
+                )
+            ).strip()
+            subscribe_cta_duration_sec = _coerce_int(
+                _branding_value(
+                    row,
+                    branding_pack,
+                    ("subscribe_cta_duration_sec", "cta_duration_sec"),
+                    5,
+                ),
+                default=5,
+                min_value=2,
+                max_value=20,
+            )
+            subscribe_cta_from_end_sec = _coerce_int(
+                _branding_value(
+                    row,
+                    branding_pack,
+                    ("subscribe_cta_from_end_sec", "cta_from_end_sec"),
+                    12,
+                ),
+                default=12,
+                min_value=2,
+                max_value=120,
+            )
+            end_screen_blocks = _to_bool(
+                _branding_value(row, branding_pack, ("end_screen_blocks",), False),
+                default=False,
+            )
+            end_screen_duration_sec = _coerce_int(
+                _branding_value(row, branding_pack, ("end_screen_duration_sec",), 8),
+                default=8,
+                min_value=2,
+                max_value=20,
+            )
+            if (
+                intro_text
+                or outro_text
+                or subscribe_cta_text
+                or end_screen_blocks
+            ):
+                branding_output_path = OUTPUT_DIR / f"{generated.get('job_id')}_batch_branding.mp4"
+                try:
+                    _apply_branding_overlays_to_video(
+                        video_path=working_video_path,
+                        output_path=branding_output_path,
+                        intro_text=intro_text,
+                        intro_duration_sec=intro_duration_sec,
+                        outro_text=outro_text,
+                        outro_duration_sec=outro_duration_sec,
+                        subscribe_cta_text=subscribe_cta_text,
+                        subscribe_cta_duration_sec=subscribe_cta_duration_sec,
+                        subscribe_cta_from_end_sec=subscribe_cta_from_end_sec,
+                        end_screen_blocks=end_screen_blocks,
+                        end_screen_duration_sec=end_screen_duration_sec,
+                    )
+                    working_video_path = branding_output_path
+                    branding_applied = True
+                except Exception as branding_exc:
+                    branding_error = str(branding_exc)
+
             credits_text = str(
-                row.get("end_credits_text")
-                or row.get("credits_text")
-                or row.get("outro_text")
+                _branding_value(
+                    row,
+                    branding_pack,
+                    ("end_credits_text", "credits_text", "outro_text"),
+                    "",
+                )
                 or ""
             ).strip()
             if credits_text:
-                try:
-                    credits_duration = int(row.get("end_credits_duration_sec") or 5)
-                except (TypeError, ValueError):
-                    credits_duration = 5
-                credits_duration = max(2, min(30, credits_duration))
+                credits_duration = _coerce_int(
+                    _branding_value(row, branding_pack, ("end_credits_duration_sec",), 5),
+                    default=5,
+                    min_value=2,
+                    max_value=30,
+                )
                 credits_output_path = OUTPUT_DIR / f"{generated.get('job_id')}_batch_credits.mp4"
                 try:
                     _apply_end_credits_to_video(
@@ -3215,12 +3833,16 @@ def process_batch_youtube(excel_file: UploadFile = File(...)) -> JSONResponse:
                 "youtube_video_url": f"https://www.youtube.com/watch?v={uploaded_video_id}",
                 "thumbnail_uploaded": thumbnail_uploaded,
                 "logo_applied": logo_applied,
+                "branding_applied": branding_applied,
+                "branding_pack": branding_pack_used,
                 "end_credits_applied": end_credits_applied,
             }
             if thumbnail_error:
                 result["thumbnail_error"] = thumbnail_error
             if logo_error:
                 result["logo_error"] = logo_error
+            if branding_error:
+                result["branding_error"] = branding_error
             if end_credits_error:
                 result["end_credits_error"] = end_credits_error
             if rfc3339_publish_at and safe_visibility != "private":
@@ -3320,13 +3942,24 @@ def youtube_upload(
     visibility: str = Form("private"),
     publish_at: str = Form(""),
     upload_as_short: str = Form(""),
+    branding_pack: str = Form(""),
     video_file: UploadFile = File(...),
     thumbnail: UploadFile | None = File(None),
     logo_file: UploadFile | None = File(None),
-    logo_position: str = Form("top-right"),
-    logo_scale_percent: int = Form(15),
+    logo_position: str = Form(""),
+    logo_scale_percent: str = Form(""),
+    logo_animated: str = Form(""),
+    intro_text: str = Form(""),
+    intro_duration_sec: str = Form(""),
+    outro_text: str = Form(""),
+    outro_duration_sec: str = Form(""),
+    subscribe_cta_text: str = Form(""),
+    subscribe_cta_duration_sec: str = Form(""),
+    subscribe_cta_from_end_sec: str = Form(""),
+    end_screen_blocks: str = Form(""),
+    end_screen_duration_sec: str = Form(""),
     end_credits_text: str = Form(""),
-    end_credits_duration_sec: int = Form(5),
+    end_credits_duration_sec: str = Form(""),
 ) -> JSONResponse:
     creds = _load_credentials()
     if not creds:
@@ -3339,26 +3972,87 @@ def youtube_upload(
     with video_path.open("wb") as video_buffer:
         shutil.copyfileobj(video_file.file, video_buffer)
     upload_video_path = video_path
+    branding_pack_obj = _branding_pack_by_reference(branding_pack)
+    if branding_pack_obj is None:
+        branding_pack_obj = _default_branding_pack()
+    branding_pack_used = ""
+    if branding_pack_obj:
+        branding_pack_used = str(
+            branding_pack_obj.get("id")
+            or branding_pack_obj.get("code")
+            or branding_pack_obj.get("name")
+            or ""
+        ).strip()
     logo_applied = False
     logo_error = None
+    branding_applied = False
+    branding_error = None
     end_credits_applied = False
     end_credits_error = None
     short_mode_enabled = _to_bool(upload_as_short, default=False)
     short_processed = False
     short_error = None
+    logo_path: Path | None = None
+    request_branding = {
+        "logo_position": logo_position,
+        "logo_scale_percent": logo_scale_percent,
+        "logo_animated": logo_animated,
+        "intro_text": intro_text,
+        "intro_duration_sec": intro_duration_sec,
+        "outro_text": outro_text,
+        "outro_duration_sec": outro_duration_sec,
+        "subscribe_cta_text": subscribe_cta_text,
+        "subscribe_cta_duration_sec": subscribe_cta_duration_sec,
+        "subscribe_cta_from_end_sec": subscribe_cta_from_end_sec,
+        "end_screen_blocks": end_screen_blocks,
+        "end_screen_duration_sec": end_screen_duration_sec,
+        "end_credits_text": end_credits_text,
+        "end_credits_duration_sec": end_credits_duration_sec,
+    }
     if logo_file is not None:
         safe_logo_name = _safe_filename(logo_file.filename or "logo.png")
         logo_path = OUTPUT_DIR / f"{video_id}_logo_{safe_logo_name}"
         with logo_path.open("wb") as logo_buffer:
             shutil.copyfileobj(logo_file.file, logo_buffer)
+    elif branding_pack_obj is not None:
+        logo_reference = _branding_value(
+            request_branding, branding_pack_obj, ("logo_file", "logo_path"), ""
+        )
+        logo_path = _resolve_batch_asset_path(
+            {"logo_file": logo_reference},
+            ("logo_file",),
+            LOGOS_DIR,
+        )
+
+    if logo_path is not None:
+        resolved_logo_position = str(
+            _branding_value(
+                request_branding, branding_pack_obj, ("logo_position",), "top-right"
+            )
+        ).strip().lower()
+        if resolved_logo_position not in {"top-left", "top-right", "bottom-left", "bottom-right", "center"}:
+            resolved_logo_position = "top-right"
+        resolved_logo_scale = _coerce_int(
+            _branding_value(
+                request_branding, branding_pack_obj, ("logo_scale_percent",), 15
+            ),
+            default=15,
+            min_value=5,
+            max_value=40,
+        )
+        resolved_logo_animated = _to_bool(
+            _branding_value(request_branding, branding_pack_obj, ("logo_animated",), False),
+            default=False,
+        )
         logo_output_path = OUTPUT_DIR / f"{video_id}_with_logo.mp4"
         try:
             _apply_logo_overlay_to_video(
-                video_path=video_path,
+                video_path=upload_video_path,
                 logo_path=logo_path,
                 output_path=logo_output_path,
-                logo_position=(logo_position or "top-right").strip().lower(),
-                logo_scale_percent=logo_scale_percent,
+                logo_position=resolved_logo_position,
+                logo_scale_percent=resolved_logo_scale,
+                logo_animated=resolved_logo_animated,
             )
             upload_video_path = logo_output_path
             logo_applied = True
@@ -3370,14 +4064,114 @@ def youtube_upload(
                 },
                 status_code=400,
             )
-    if (end_credits_text or "").strip():
+
+    resolved_intro_text = str(
+        _branding_value(request_branding, branding_pack_obj, ("intro_text", "intro_title"), "")
+    ).strip()
+    resolved_intro_duration = _coerce_int(
+        _branding_value(request_branding, branding_pack_obj, ("intro_duration_sec",), 0),
+        default=0,
+        min_value=0,
+        max_value=15,
+    )
+    resolved_outro_text = str(
+        _branding_value(request_branding, branding_pack_obj, ("outro_text", "outro_title"), "")
+    ).strip()
+    resolved_outro_duration = _coerce_int(
+        _branding_value(request_branding, branding_pack_obj, ("outro_duration_sec",), 0),
+        default=0,
+        min_value=0,
+        max_value=20,
+    )
+    resolved_cta_text = str(
+        _branding_value(
+            request_branding,
+            branding_pack_obj,
+            ("subscribe_cta_text", "cta_text", "subscribe_text"),
+            "",
+        )
+    ).strip()
+    resolved_cta_duration = _coerce_int(
+        _branding_value(
+            request_branding,
+            branding_pack_obj,
+            ("subscribe_cta_duration_sec", "cta_duration_sec"),
+            5,
+        ),
+        default=5,
+        min_value=2,
+        max_value=20,
+    )
+    resolved_cta_from_end = _coerce_int(
+        _branding_value(
+            request_branding,
+            branding_pack_obj,
+            ("subscribe_cta_from_end_sec", "cta_from_end_sec"),
+            12,
+        ),
+        default=12,
+        min_value=2,
+        max_value=120,
+    )
+    resolved_end_screen_blocks = _to_bool(
+        _branding_value(request_branding, branding_pack_obj, ("end_screen_blocks",), False),
+        default=False,
+    )
+    resolved_end_screen_duration = _coerce_int(
+        _branding_value(request_branding, branding_pack_obj, ("end_screen_duration_sec",), 8),
+        default=8,
+        min_value=2,
+        max_value=20,
+    )
+
+    if (
+        resolved_intro_text
+        or resolved_outro_text
+        or resolved_cta_text
+        or resolved_end_screen_blocks
+    ):
+        branding_output_path = OUTPUT_DIR / f"{video_id}_with_branding.mp4"
+        try:
+            _apply_branding_overlays_to_video(
+                video_path=upload_video_path,
+                output_path=branding_output_path,
+                intro_text=resolved_intro_text,
+                intro_duration_sec=resolved_intro_duration,
+                outro_text=resolved_outro_text,
+                outro_duration_sec=resolved_outro_duration,
+                subscribe_cta_text=resolved_cta_text,
+                subscribe_cta_duration_sec=resolved_cta_duration,
+                subscribe_cta_from_end_sec=resolved_cta_from_end,
+                end_screen_blocks=resolved_end_screen_blocks,
+                end_screen_duration_sec=resolved_end_screen_duration,
+            )
+            upload_video_path = branding_output_path
+            branding_applied = True
+        except Exception as exc:
+            branding_error = str(exc)
+
+    resolved_end_credits_text = str(
+        _branding_value(
+            request_branding,
+            branding_pack_obj,
+            ("end_credits_text", "credits_text", "outro_text"),
+            "",
+        )
+    ).strip()
+    resolved_end_credits_duration = _coerce_int(
+        _branding_value(request_branding, branding_pack_obj, ("end_credits_duration_sec",), 5),
+        default=5,
+        min_value=2,
+        max_value=30,
+    )
+    if resolved_end_credits_text:
         credits_output_path = OUTPUT_DIR / f"{video_id}_with_credits.mp4"
         try:
             _apply_end_credits_to_video(
                 video_path=upload_video_path,
                 output_path=credits_output_path,
-                credits_text=end_credits_text,
-                credits_duration_sec=end_credits_duration_sec,
+                credits_text=resolved_end_credits_text,
+                credits_duration_sec=resolved_end_credits_duration,
             )
             upload_video_path = credits_output_path
             end_credits_applied = True
@@ -3498,6 +4292,9 @@ def youtube_upload(
         "thumbnail_error": thumbnail_error,
         "logo_applied": logo_applied,
         "logo_error": logo_error,
+        "branding_applied": branding_applied,
+        "branding_error": branding_error,
+        "branding_pack": branding_pack_used,
         "end_credits_applied": end_credits_applied,
         "end_credits_error": end_credits_error,
         "short_mode_enabled": short_mode_enabled,
