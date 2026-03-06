@@ -37,6 +37,10 @@ test_batch*.xlsx
 data/scripts/story*.txt
 data/video_library/sample_video.mp4
 data/video_library/sample_loop.mp4
+data/video_library/*
+!data/video_library/README.md
+!data/video_library/catalog.json
+!data/video_library/.gitkeep
 
 # Frontend local/build artifacts
 frontend/node_modules/

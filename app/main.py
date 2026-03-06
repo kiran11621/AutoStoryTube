@@ -35,6 +35,7 @@ OUTPUT_DIR = DATA_DIR / "outputs"
 CREDENTIALS_DIR = DATA_DIR / "credentials"
 VIDEO_LIBRARY_DIR = DATA_DIR / "video_library"
 VIDEO_LIBRARY_CATALOG = VIDEO_LIBRARY_DIR / "catalog.json"
+VIDEO_LIBRARY_INDEX = VIDEO_LIBRARY_DIR / "video_index.json"
 SCRIPTS_DIR = DATA_DIR / "scripts"
 MUSIC_DIR = DATA_DIR / "music"
 LOGOS_DIR = DATA_DIR / "logos"
@@ -211,6 +212,171 @@ VOICE_STYLE_SOUND_PROFILES = {
         "presence_gain": 2.0,
     },
 }
+CONTEXT_CATEGORY_RULES = {
+    "motivation": {
+        "tokens": {
+            "motivation",
+            "motivational",
+            "discipline",
+            "consistent",
+            "consistency",
+            "grind",
+            "hustle",
+            "effort",
+            "focus",
+            "persist",
+            "persevere",
+        },
+        "phrases": {"never give up", "keep going", "stay focused"},
+    },
+    "mindset": {
+        "tokens": {
+            "mindset",
+            "belief",
+            "confidence",
+            "mentality",
+            "psychology",
+            "thinking",
+            "perspective",
+            "clarity",
+            "attitude",
+            "selftalk",
+        },
+        "phrases": {"growth mindset", "mental model", "change your thinking"},
+    },
+    "success": {
+        "tokens": {
+            "success",
+            "achieve",
+            "achievement",
+            "winner",
+            "winning",
+            "goal",
+            "results",
+            "milestone",
+            "accomplish",
+            "top",
+        },
+        "phrases": {"path to success", "achieve your goal", "become successful"},
+    },
+    "business": {
+        "tokens": {
+            "business",
+            "startup",
+            "entrepreneur",
+            "company",
+            "market",
+            "strategy",
+            "team",
+            "office",
+            "management",
+            "sales",
+            "brand",
+        },
+        "phrases": {"business model", "start a business", "build a company"},
+    },
+    "finance": {
+        "tokens": {
+            "finance",
+            "money",
+            "investment",
+            "invest",
+            "wealth",
+            "income",
+            "savings",
+            "budget",
+            "stock",
+            "trading",
+            "economy",
+            "debt",
+            "profit",
+        },
+        "phrases": {"financial freedom", "passive income", "stock market"},
+    },
+    "politics": {
+        "tokens": {
+            "politics",
+            "political",
+            "election",
+            "government",
+            "minister",
+            "parliament",
+            "policy",
+            "senate",
+            "democracy",
+            "campaign",
+            "vote",
+            "party",
+        },
+        "phrases": {"public policy", "general election", "political campaign"},
+    },
+    "currentaffairs": {
+        "tokens": {
+            "news",
+            "breaking",
+            "update",
+            "current",
+            "affairs",
+            "headline",
+            "international",
+            "global",
+            "today",
+            "latest",
+            "report",
+            "crisis",
+        },
+        "phrases": {"breaking news", "latest update", "current affairs"},
+    },
+    "socialcommentary": {
+        "tokens": {
+            "society",
+            "social",
+            "culture",
+            "community",
+            "issue",
+            "debate",
+            "opinion",
+            "trend",
+            "public",
+            "narrative",
+            "commentary",
+        },
+        "phrases": {"social issue", "public opinion", "cultural shift"},
+    },
+    "reallifestories": {
+        "tokens": {
+            "story",
+            "real",
+            "life",
+            "journey",
+            "family",
+            "struggle",
+            "experience",
+            "incident",
+            "lesson",
+            "human",
+            "person",
+        },
+        "phrases": {"real life story", "true story", "life lesson"},
+    },
+    "viraltrends": {
+        "tokens": {
+            "viral",
+            "trend",
+            "trending",
+            "shorts",
+            "reel",
+            "reels",
+            "socialmedia",
+            "internet",
+            "meme",
+            "popular",
+            "algorithm",
+            "creator",
+        },
+        "phrases": {"viral trend", "going viral", "social media trend"},
+    },
+}
 
 
 def _voice_profile(voice_style: str, rate: int) -> dict[str, float]:
@@ -343,6 +509,11 @@ def index(request: Request) -> HTMLResponse:
 @app.get("/api/library")
 def library_catalog() -> JSONResponse:
     return JSONResponse({"videos": _load_video_catalog()})
+
+
+@app.get("/api/library/categories")
+def library_categories() -> JSONResponse:
+    return JSONResponse({"categories": _available_context_categories()})
 
 
 def _run_ffmpeg(command: list[str]) -> None:
@@ -605,10 +776,683 @@ def _load_video_catalog() -> list[dict[str, str]]:
     if not VIDEO_LIBRARY_CATALOG.exists():
         return []
     try:
-        entries = json.loads(VIDEO_LIBRARY_CATALOG.read_text(encoding="utf-8"))
+        entries = json.loads(VIDEO_LIBRARY_CATALOG.read_text(encoding="utf-8-sig"))
     except json.JSONDecodeError:
         return []
     return [entry for entry in entries if isinstance(entry, dict)]
+
+
+def _normalize_category(value: object) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", "", str(value or "").strip().lower())
+    return normalized
+
+
+def _load_video_index() -> list[dict]:
+    entries: list = []
+    if VIDEO_LIBRARY_INDEX.exists():
+        try:
+            loaded = json.loads(VIDEO_LIBRARY_INDEX.read_text(encoding="utf-8-sig"))
+            if isinstance(loaded, list):
+                entries = loaded
+        except json.JSONDecodeError:
+            entries = []
+
+    normalized_entries = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        filename = str(entry.get("filename") or "").strip()
+        if not filename:
+            continue
+        candidate = VIDEO_LIBRARY_DIR / filename
+        if not candidate.exists():
+            continue
+        tags = entry.get("tags")
+        if not isinstance(tags, list):
+            tags = []
+        normalized_entries.append(
+            {
+                "code": str(entry.get("code") or "").strip(),
+                "title": str(entry.get("title") or "").strip(),
+                "filename": filename,
+                "path": candidate,
+                "category": _normalize_category(entry.get("category") or ""),
+                "tags": [str(tag).strip().lower() for tag in tags if str(tag).strip()],
+            }
+        )
+    if normalized_entries:
+        return normalized_entries
+
+    # Fallback: derive a minimal index from catalog so context switching
+    # still works even when video_index.json is missing/invalid.
+    fallback_entries = []
+    for catalog_entry in _load_video_catalog():
+        filename = str(catalog_entry.get("filename") or "").strip()
+        if not filename:
+            continue
+        candidate = VIDEO_LIBRARY_DIR / filename
+        if not candidate.exists():
+            continue
+        category = _normalize_category(Path(filename).parts[0] if "/" in filename or "\\" in filename else "")
+        if not category:
+            category = _normalize_category(catalog_entry.get("code") or "")
+        title = str(catalog_entry.get("title") or "").strip()
+        stem_tokens = _tokenize_scene_text(Path(filename).stem.replace("_", " "))
+        fallback_entries.append(
+            {
+                "code": str(catalog_entry.get("code") or "").strip(),
+                "title": title,
+                "filename": filename,
+                "path": candidate,
+                "category": category,
+                "tags": sorted(stem_tokens) if stem_tokens else ([category] if category else []),
+            }
+        )
+    return fallback_entries
+
+
+def _available_context_categories() -> list[str]:
+    categories = {
+        str(entry.get("category") or "").strip().lower()
+        for entry in _load_video_index()
+        if str(entry.get("category") or "").strip()
+    }
+    return sorted(category for category in categories if category)
+
+
+def _fallback_context_video_path(category_hint: str | None = None) -> Path | None:
+    normalized_hint = _normalize_category(category_hint or "")
+    index_entries = _load_video_index()
+    if index_entries:
+        if normalized_hint:
+            for entry in index_entries:
+                if entry.get("category") == normalized_hint:
+                    candidate = entry.get("path")
+                    if isinstance(candidate, Path) and candidate.exists():
+                        return candidate
+        first_path = index_entries[0].get("path")
+        if isinstance(first_path, Path) and first_path.exists():
+            return first_path
+    for entry in _load_video_catalog():
+        filename = str(entry.get("filename") or "").strip()
+        if not filename:
+            continue
+        candidate = VIDEO_LIBRARY_DIR / filename
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _tokenize_scene_text(text: str) -> set[str]:
+    tokens = re.findall(r"[a-z0-9']+", str(text or "").lower())
+    stop_words = {
+        "the",
+        "and",
+        "for",
+        "that",
+        "this",
+        "with",
+        "from",
+        "your",
+        "you",
+        "are",
+        "was",
+        "were",
+        "into",
+        "about",
+        "have",
+        "has",
+        "had",
+        "not",
+        "but",
+        "they",
+        "them",
+        "their",
+    }
+    return {token for token in tokens if len(token) >= 3 and token not in stop_words}
+
+
+def _split_script_into_scenes(text: str, max_scenes: int = 6) -> list[str]:
+    normalized_text = str(text or "").strip()
+    line_chunks = [line.strip() for line in normalized_text.splitlines() if line.strip()]
+    if len(line_chunks) > 1:
+        chunks = line_chunks
+    else:
+        chunks = [
+            chunk.strip()
+            for chunk in re.split(r"(?<=[.!?])\s+|\n+", normalized_text)
+            if chunk and chunk.strip()
+        ]
+    if not chunks:
+        return [normalized_text]
+    max_scenes = max(1, min(12, int(max_scenes)))
+    if len(chunks) == 1 and max_scenes > 1:
+        # Fallback for scripts that are one long line with weak punctuation:
+        # split by word windows so requested context scene count is honored.
+        words = [word for word in re.split(r"\s+", normalized_text) if word]
+        if len(words) >= max_scenes:
+            per_scene = max(1, (len(words) + max_scenes - 1) // max_scenes)
+            forced_chunks = []
+            for idx in range(0, len(words), per_scene):
+                forced_chunks.append(" ".join(words[idx : idx + per_scene]).strip())
+            chunks = [chunk for chunk in forced_chunks if chunk]
+        elif len(words) > 1:
+            # For very short one-liners, keep one or two words per scene.
+            chunks = words
+        elif len(normalized_text) >= 8:
+            # Last fallback for tiny text with one token.
+            char_slices = []
+            width = max(1, len(normalized_text) // max_scenes)
+            for idx in range(0, len(normalized_text), width):
+                char_slices.append(normalized_text[idx : idx + width].strip())
+            chunks = [chunk for chunk in char_slices if chunk]
+    if len(chunks) <= max_scenes:
+        return chunks
+    merged = []
+    group_size = (len(chunks) + max_scenes - 1) // max_scenes
+    for idx in range(0, len(chunks), group_size):
+        merged.append(" ".join(chunks[idx : idx + group_size]).strip())
+    return [scene for scene in merged if scene]
+
+
+def _scene_important_tokens(scene_text: str) -> list[str]:
+    words = re.findall(r"[a-z0-9']+", str(scene_text or "").lower())
+    stop_words = {
+        "the",
+        "and",
+        "for",
+        "that",
+        "this",
+        "with",
+        "from",
+        "your",
+        "you",
+        "are",
+        "was",
+        "were",
+        "into",
+        "about",
+        "have",
+        "has",
+        "had",
+        "not",
+        "but",
+        "they",
+        "them",
+        "their",
+        "will",
+        "just",
+        "then",
+        "than",
+    }
+    return [w for w in words if len(w) >= 3 and w not in stop_words]
+
+
+def _candidate_semantic_score(
+    *,
+    scene_text: str,
+    scene_tokens: set[str],
+    important_tokens: list[str],
+    candidate_tokens: set[str],
+    category_match: bool,
+) -> int:
+    if not candidate_tokens:
+        return 0
+    base_overlap = len(scene_tokens.intersection(candidate_tokens))
+    important_overlap = sum(1 for token in important_tokens if token in candidate_tokens)
+
+    phrase_bonus = 0
+    scene_lower = scene_text.lower()
+    for phrase in re.findall(r"[a-z0-9']+\s+[a-z0-9']+", scene_lower):
+        a, b = phrase.split(" ", 1)
+        if a in candidate_tokens and b in candidate_tokens:
+            phrase_bonus += 1
+
+    score = (base_overlap * 3) + (important_overlap * 2) + phrase_bonus
+    if category_match:
+        score += 2
+    return score
+
+
+def _scene_durations_by_text_weight(scenes: list[str], total_duration: float) -> list[float]:
+    if not scenes:
+        return []
+    if total_duration <= 0:
+        return [1.0 for _ in scenes]
+    weights = [max(1, len(_tokenize_scene_text(scene))) for scene in scenes]
+    total_weight = float(sum(weights))
+    durations = [max(0.8, total_duration * (weight / total_weight)) for weight in weights]
+    scaled_total = sum(durations)
+    if scaled_total > 0:
+        scale = total_duration / scaled_total
+        durations = [max(0.6, duration * scale) for duration in durations]
+    delta = total_duration - sum(durations)
+    durations[-1] = max(0.6, durations[-1] + delta)
+    return durations
+
+
+def _row_video_strategy(row: dict) -> str:
+    strategy = str(
+        row.get("video_strategy")
+        or row.get("video_mode")
+        or row.get("video_selection_mode")
+        or "single"
+    ).strip().lower()
+    aliases = {
+        "default": "single",
+        "single_video": "single",
+        "single_library": "single",
+        "single": "single",
+        "context": "context_switch",
+        "contextual": "context_switch",
+        "context_switching": "context_switch",
+        "smart": "context_switch",
+        "auto_context": "context_switch",
+    }
+    return aliases.get(strategy, strategy)
+
+
+def _scene_candidate_score(
+    scene_tokens: set[str], candidate_tokens: set[str], category_boost: bool
+) -> int:
+    if not candidate_tokens:
+        return 0
+    overlap = len(scene_tokens.intersection(candidate_tokens))
+    return overlap + (2 if category_boost else 0)
+
+
+def _scene_category_scores(
+    scene_text: str,
+    scene_tokens: set[str],
+    available_categories: set[str],
+) -> dict[str, int]:
+    normalized_scene = str(scene_text or "").lower()
+    scores: dict[str, int] = {}
+    for category in available_categories:
+        rule = CONTEXT_CATEGORY_RULES.get(category)
+        if not rule:
+            continue
+        token_matches = len(scene_tokens.intersection(set(rule.get("tokens", set()))))
+        phrase_hits = sum(
+            1 for phrase in rule.get("phrases", set()) if phrase in normalized_scene
+        )
+        scores[category] = token_matches + (phrase_hits * 3)
+    return scores
+
+
+def _infer_scene_category(
+    scene_text: str,
+    scene_tokens: set[str],
+    available_categories: set[str],
+    category_hint: str,
+) -> str | None:
+    scores = _scene_category_scores(scene_text, scene_tokens, available_categories)
+    if category_hint in available_categories:
+        scores[category_hint] = scores.get(category_hint, 0) + 1
+    if not scores:
+        return category_hint if category_hint in available_categories else None
+    best_category, best_score = max(scores.items(), key=lambda item: item[1])
+    if best_score <= 0:
+        return category_hint if category_hint in available_categories else None
+    return best_category
+
+
+def _select_context_clip_paths(
+    scenes: list[str],
+    row: dict,
+    fallback_video_path: Path,
+) -> tuple[list[Path], list[str]]:
+    if not scenes:
+        return [fallback_video_path], ["fallback"]
+
+    category_hint = _normalize_category(
+        row.get("category_hint") or row.get("content_category") or row.get("video_category")
+    )
+    category_lock = _to_bool(
+        row.get("context_lock_category"),
+        default=bool(category_hint),
+    )
+    index_entries = _load_video_index()
+    if not index_entries:
+        return [fallback_video_path for _ in scenes], ["fallback" for _ in scenes]
+
+    candidates = []
+    category_buckets: dict[str, list[dict]] = {}
+    for entry in index_entries:
+        tags = set(_tokenize_scene_text(" ".join(entry.get("tags", []))))
+        title_tokens = _tokenize_scene_text(str(entry.get("title") or ""))
+        category = str(entry.get("category") or "")
+        filename_tokens = _tokenize_scene_text(str(entry.get("filename") or ""))
+        category_tokens = _tokenize_scene_text(category.replace("_", " "))
+        code = str(entry.get("code") or "")
+        candidate = {
+            "path": entry["path"],
+            "category": category,
+            "tokens": tags.union(title_tokens).union(category_tokens).union(filename_tokens),
+            "code": code,
+        }
+        candidates.append(
+            candidate
+        )
+        if category:
+            category_buckets.setdefault(category, []).append(candidate)
+    if not candidates:
+        return [fallback_video_path for _ in scenes], ["fallback" for _ in scenes]
+    for category in category_buckets:
+        category_buckets[category] = sorted(
+            category_buckets[category], key=lambda candidate: candidate["code"]
+        )
+
+    selected_paths: list[Path] = []
+    selected_categories: list[str] = []
+    last_selected: Path | None = None
+    used_paths: set[str] = set()
+    category_cursor: dict[str, int] = {}
+    available_categories = set(category_buckets.keys())
+    locked_category: str | None = None
+    if category_lock and category_hint in available_categories:
+        locked_category = category_hint
+    for scene in scenes:
+        scene_tokens = _tokenize_scene_text(scene)
+        important_tokens = _scene_important_tokens(scene)
+        if locked_category:
+            target_category = locked_category
+        else:
+            target_category = _infer_scene_category(
+                scene, scene_tokens, available_categories, category_hint
+            )
+
+        ranked_pool = category_buckets.get(target_category or "", [])
+        if ranked_pool:
+            ranked_local = sorted(
+                ranked_pool,
+                key=lambda candidate: (
+                    _candidate_semantic_score(
+                        scene_text=scene,
+                        scene_tokens=scene_tokens,
+                        important_tokens=important_tokens,
+                        candidate_tokens=candidate["tokens"],
+                        category_match=True,
+                    ),
+                    candidate["code"],
+                ),
+                reverse=True,
+            )
+            picked_local = None
+            for candidate in ranked_local:
+                key = str(candidate["path"])
+                if candidate["path"] == last_selected and len(ranked_local) > 1:
+                    continue
+                if key in used_paths and len(ranked_local) > 1:
+                    continue
+                picked_local = candidate
+                break
+            if picked_local is None:
+                cursor = category_cursor.get(target_category or "", 0)
+                picked_local = ranked_local[cursor % len(ranked_local)]
+                category_cursor[target_category or ""] = cursor + 1
+            selected_paths.append(picked_local["path"])
+            selected_categories.append(target_category or "fallback")
+            last_selected = picked_local["path"]
+            used_paths.add(str(picked_local["path"]))
+            continue
+
+        ranked = sorted(
+            candidates,
+            key=lambda candidate: (
+                _candidate_semantic_score(
+                    scene_text=scene,
+                    scene_tokens=scene_tokens,
+                    important_tokens=important_tokens,
+                    candidate_tokens=candidate["tokens"],
+                    category_match=bool(
+                        target_category and candidate["category"] == target_category
+                    ),
+                ),
+                1 if target_category and candidate["category"] == target_category else 0,
+                candidate["code"],
+            ),
+            reverse=True,
+        )
+        chosen_path = fallback_video_path
+        chosen_category = "fallback"
+        for option in ranked:
+            option_path = option["path"]
+            option_key = str(option_path)
+            if last_selected is not None and option_path == last_selected and len(ranked) > 1:
+                continue
+            if option_key in used_paths and len(ranked) > 1:
+                continue
+            chosen_path = option_path
+            chosen_category = option["category"] or "fallback"
+            break
+        selected_paths.append(chosen_path)
+        selected_categories.append(chosen_category)
+        last_selected = chosen_path
+        used_paths.add(str(chosen_path))
+    # Force diversity when scene_count > 1: if all selections collapsed to one clip,
+    # rotate through same-category pool first, then global candidates.
+    if len(scenes) > 1 and len({str(path) for path in selected_paths}) == 1:
+        diversity_pool: list[dict] = []
+        if category_hint and category_hint in category_buckets:
+            diversity_pool = category_buckets[category_hint]
+        if not diversity_pool:
+            diversity_pool = sorted(candidates, key=lambda candidate: candidate["code"])
+        if len(diversity_pool) > 1:
+            diversified_paths: list[Path] = []
+            diversified_categories: list[str] = []
+            for idx in range(len(scenes)):
+                pick = diversity_pool[idx % len(diversity_pool)]
+                diversified_paths.append(pick["path"])
+                diversified_categories.append(pick["category"] or "fallback")
+            selected_paths = diversified_paths
+            selected_categories = diversified_categories
+
+    # Additional dedup pass: replace repeated selections where possible, while
+    # preserving per-scene category intent.
+    if len(scenes) > 1 and selected_paths:
+        seen_paths: set[str] = set()
+        all_pool = sorted(candidates, key=lambda candidate: candidate["code"])
+        for idx, current_path in enumerate(selected_paths):
+            current_key = str(current_path)
+            if current_key not in seen_paths:
+                seen_paths.add(current_key)
+                continue
+
+            target_category = selected_categories[idx] if idx < len(selected_categories) else ""
+            replacement_pool = category_buckets.get(target_category, [])
+            if not replacement_pool:
+                replacement_pool = all_pool
+
+            replacement = None
+            for candidate in replacement_pool:
+                key = str(candidate["path"])
+                if key in seen_paths:
+                    continue
+                replacement = candidate
+                break
+
+            if replacement is not None:
+                selected_paths[idx] = replacement["path"]
+                if idx < len(selected_categories):
+                    selected_categories[idx] = replacement["category"] or target_category or "fallback"
+                seen_paths.add(str(replacement["path"]))
+            else:
+                seen_paths.add(current_key)
+
+    return selected_paths, selected_categories
+
+
+def _build_context_background_video(
+    *,
+    job_id: str,
+    text: str,
+    total_duration: float,
+    output_mode: str,
+    row: dict,
+    fallback_video_path: Path,
+) -> tuple[Path, int, list[str], list[str]]:
+    max_scenes_value = row.get("context_scene_count")
+    try:
+        max_scenes = max(1, min(12, int(max_scenes_value)))
+    except (TypeError, ValueError):
+        max_scenes = 6
+    scenes = _split_script_into_scenes(text, max_scenes=max_scenes)
+    scene_durations = _scene_durations_by_text_weight(scenes, total_duration)
+    planned_crossfade = 0.0
+    if len(scene_durations) >= 2:
+        # xfade overlaps adjacent segments, so stitched duration becomes shorter.
+        # Pre-compensate by adding the overlap budget to the last segment.
+        min_scene_duration = min(scene_durations)
+        planned_crossfade = min(0.35, max(0.0, min_scene_duration - 0.15))
+        overlap_budget = planned_crossfade * (len(scene_durations) - 1)
+        if overlap_budget > 0:
+            scene_durations[-1] = scene_durations[-1] + overlap_budget
+    scene_clip_paths, scene_categories = _select_context_clip_paths(
+        scenes, row, fallback_video_path
+    )
+    if len(scene_clip_paths) > 1 and len({str(path) for path in scene_clip_paths}) == 1:
+        # Final guard: force unique clip paths before segment rendering.
+        hint = _normalize_category(
+            row.get("category_hint") or row.get("content_category") or row.get("video_category")
+        )
+        index_entries = _load_video_index()
+        pool = []
+        for entry in index_entries:
+            p = entry.get("path")
+            if not isinstance(p, Path) or not p.exists():
+                continue
+            category = str(entry.get("category") or "")
+            if hint and category != hint:
+                continue
+            pool.append(p)
+        if len(pool) < 2:
+            pool = [entry.get("path") for entry in index_entries if isinstance(entry.get("path"), Path) and entry.get("path").exists()]
+        unique_pool = []
+        seen = set()
+        for p in pool:
+            key = str(p)
+            if key in seen:
+                continue
+            seen.add(key)
+            unique_pool.append(p)
+        if len(unique_pool) > 1:
+            scene_clip_paths = [unique_pool[idx % len(unique_pool)] for idx in range(len(scene_clip_paths))]
+
+    segment_paths = []
+    for idx, (clip_path, segment_duration) in enumerate(
+        zip(scene_clip_paths, scene_durations), start=1
+    ):
+        segment_output = OUTPUT_DIR / f"{job_id}_ctxseg_{idx:03}.mp4"
+        frame_filter = _build_smart_framing_filter(clip_path, output_mode)
+        segment_filter = f"{frame_filter},fps=30,settb=AVTB,format=yuv420p"
+        clip_duration = _video_duration_seconds(clip_path)
+        max_seek = max(0.0, clip_duration - max(0.6, float(segment_duration)) - 0.1)
+        seek_offset = 0.0
+        if max_seek > 0:
+            # Vary start frame to avoid visual repetition even when a clip is reused.
+            seek_offset = min(max_seek, (idx * 1.37) % max_seek)
+        segment_command = [
+            "ffmpeg",
+            "-y",
+            "-ss",
+            f"{seek_offset:.2f}",
+            "-stream_loop",
+            "-1",
+            "-i",
+            str(clip_path),
+            "-t",
+            f"{max(0.6, float(segment_duration)):.2f}",
+            "-vf",
+            segment_filter,
+            "-an",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            str(segment_output),
+        ]
+        _run_ffmpeg(segment_command)
+        segment_paths.append(segment_output)
+
+    stitched_output = OUTPUT_DIR / f"{job_id}_context_bg.mp4"
+    # Smooth transitions: crossfade scene segments into a single continuous background.
+    # Fallback to concat when there are too few/too-short segments for crossfade.
+    def _concat_segments() -> None:
+        concat_list_path = OUTPUT_DIR / f"{job_id}_ctx_concat.txt"
+        concat_lines = []
+        for segment_path in segment_paths:
+            concat_file = str(segment_path.resolve()).replace("\\", "/").replace("'", "'\\''")
+            concat_lines.append(f"file '{concat_file}'")
+        concat_list_path.write_text("\n".join(concat_lines) + "\n", encoding="utf-8")
+        concat_command = [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            str(concat_list_path),
+            "-an",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            str(stitched_output),
+        ]
+        _run_ffmpeg(concat_command)
+
+    if len(segment_paths) >= 2:
+        durations = [_video_duration_seconds(path) for path in segment_paths]
+        min_duration = min(durations) if durations else 0.0
+        crossfade = min(planned_crossfade, min_duration - 0.15)
+        crossfade = max(0.0, crossfade)
+        if crossfade >= 0.12:
+            xfade_inputs: list[str] = []
+            xfade_filter_parts: list[str] = []
+            for segment_path in segment_paths:
+                xfade_inputs.extend(["-i", str(segment_path)])
+
+            offset = max(0.0, durations[0] - crossfade)
+            xfade_filter_parts.append(
+                f"[0:v][1:v]xfade=transition=fade:duration={crossfade:.2f}:offset={offset:.2f}[v1]"
+            )
+            cumulative_duration = durations[0]
+            for idx in range(2, len(segment_paths)):
+                cumulative_duration += durations[idx - 1] - crossfade
+                offset = max(0.0, cumulative_duration - crossfade)
+                xfade_filter_parts.append(
+                    f"[v{idx-1}][{idx}:v]xfade=transition=fade:duration={crossfade:.2f}:offset={offset:.2f}[v{idx}]"
+                )
+
+            last_label = f"[v{len(segment_paths)-1}]"
+            xfade_command = [
+                "ffmpeg",
+                "-y",
+                *xfade_inputs,
+                "-filter_complex",
+                ";".join(xfade_filter_parts),
+                "-map",
+                last_label,
+                "-an",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                str(stitched_output),
+            ]
+            try:
+                _run_ffmpeg(xfade_command)
+            except RuntimeError:
+                _concat_segments()
+        else:
+            _concat_segments()
+    else:
+        _concat_segments()
+    unique_codes = len({path.name for path in scene_clip_paths})
+    scene_clip_names = [path.name for path in scene_clip_paths]
+    return stitched_output, unique_codes, scene_categories, scene_clip_names
 
 
 def _library_video_path(code: str) -> Path | None:
@@ -799,6 +1643,160 @@ def _build_ass_style_line(
     )
 
 
+def _subtitle_segments_from_text(text: str, max_words_per_segment: int = 9) -> list[str]:
+    normalized = " ".join(str(text or "").replace("\n", " ").split()).strip()
+    if not normalized:
+        return []
+
+    sentence_parts = [
+        part.strip()
+        for part in re.findall(r"[^.!?]+[.!?]?", normalized)
+        if part and part.strip()
+    ]
+    if not sentence_parts:
+        sentence_parts = [normalized]
+
+    segments: list[str] = []
+    for sentence in sentence_parts:
+        clause_parts = [
+            clause.strip()
+            for clause in re.split(r"(?<=[,;:])\s+|\s+(?:and|but|because|so|while)\s+", sentence)
+            if clause and clause.strip()
+        ]
+        if not clause_parts:
+            clause_parts = [sentence]
+        for clause in clause_parts:
+            words = clause.split()
+            if not words:
+                continue
+            if len(words) <= max_words_per_segment:
+                segments.append(clause.strip())
+                continue
+
+            has_terminal_punct = bool(re.search(r"[.!?]\s*$", clause))
+            clean_clause = clause.rstrip(".!? ").strip()
+            clean_words = clean_clause.split()
+            for idx in range(0, len(clean_words), max_words_per_segment):
+                chunk_words = clean_words[idx : idx + max_words_per_segment]
+                if not chunk_words:
+                    continue
+                chunk_text = " ".join(chunk_words)
+                if has_terminal_punct and idx + max_words_per_segment >= len(clean_words):
+                    chunk_text = chunk_text + "."
+                segments.append(chunk_text.strip())
+    return segments
+
+
+def _estimate_word_syllables(word: str) -> int:
+    token = re.sub(r"[^a-z]", "", str(word or "").lower())
+    if not token:
+        return 1
+    groups = re.findall(r"[aeiouy]+", token)
+    count = len(groups)
+    if token.endswith("e") and count > 1:
+        count -= 1
+    return max(1, count)
+
+
+def _subtitle_segment_weights(segments: list[str]) -> list[float]:
+    weights: list[float] = []
+    for segment in segments:
+        words = [word for word in segment.split() if word]
+        syllables = sum(_estimate_word_syllables(word) for word in words)
+        # Blend syllable complexity with word count to better approximate TTS pacing.
+        base = max(1.0, (syllables * 0.72) + (len(words) * 0.45))
+        punctuation_bonus = 0.0
+        if re.search(r"[.!?]\s*$", segment):
+            punctuation_bonus += 1.25
+        elif re.search(r"[,;:]\s*$", segment):
+            punctuation_bonus += 0.60
+        weights.append(base + punctuation_bonus)
+    return weights
+
+
+def _normalize_segment_durations(weights: list[float], total_duration: float) -> list[float]:
+    if not weights:
+        return []
+    if total_duration <= 0:
+        return [1.0 / len(weights) for _ in weights]
+
+    total_weight = sum(weights) or float(len(weights))
+    durations = [total_duration * (weight / total_weight) for weight in weights]
+    count = len(durations)
+    min_duration = max(0.14, min(0.36, total_duration / max(1, count * 1.55)))
+
+    if total_duration > (min_duration * count):
+        for idx, value in enumerate(durations):
+            if value < min_duration:
+                durations[idx] = min_duration
+        current_total = sum(durations)
+        if current_total > total_duration:
+            excess = current_total - total_duration
+            adjustable = [
+                idx for idx, value in enumerate(durations) if value > min_duration + 1e-6
+            ]
+            while excess > 1e-6 and adjustable:
+                per_slot = excess / len(adjustable)
+                next_adjustable: list[int] = []
+                for idx in adjustable:
+                    reducible = durations[idx] - min_duration
+                    reduction = min(reducible, per_slot)
+                    durations[idx] -= reduction
+                    excess -= reduction
+                    if durations[idx] > min_duration + 1e-6:
+                        next_adjustable.append(idx)
+                adjustable = next_adjustable
+
+    delta = total_duration - sum(durations)
+    durations[-1] = max(0.06, durations[-1] + delta)
+    return durations
+
+
+def _subtitle_timing_probe_with_tts(
+    segments: list[str],
+    *,
+    tts_rate: int,
+    voice_style: str,
+    voice_gender: str,
+    max_segments: int = 24,
+) -> list[float] | None:
+    """Measure per-segment speaking time using the same TTS pipeline.
+
+    This improves subtitle/audio sync but can be slower on long scripts.
+    """
+    if not segments:
+        return None
+    if len(segments) > max_segments:
+        return None
+
+    durations: list[float] = []
+    probe_id = uuid.uuid4().hex
+    for idx, segment in enumerate(segments, start=1):
+        if not segment.strip():
+            durations.append(0.08)
+            continue
+        probe_path = OUTPUT_DIR / f"{probe_id}_subprobe_{idx:03}.wav"
+        try:
+            _text_to_speech(
+                segment,
+                probe_path,
+                tts_rate,
+                voice_style,
+                voice_gender,
+            )
+            segment_duration = _audio_duration_seconds(probe_path)
+            if re.search(r"[.!?]\s*$", segment):
+                segment_duration += 0.12
+            elif re.search(r"[,;:]\s*$", segment):
+                segment_duration += 0.06
+            durations.append(max(0.06, float(segment_duration)))
+        except Exception:
+            return None
+        finally:
+            probe_path.unlink(missing_ok=True)
+    return durations
+
+
 def _build_ass_subtitles(
     text: str,
     total_duration: float,
@@ -817,14 +1815,29 @@ def _build_ass_subtitles(
     play_res_x: int = 1280,
     play_res_y: int = 720,
     subtitle_template: str = "fade",
+    tts_rate: int = 175,
+    voice_style: str = "professional",
+    voice_gender: str = "male",
+    precise_timing: bool = True,
 ) -> None:
     subtitle_template = _resolve_subtitle_template(subtitle_template)
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    lines = _subtitle_segments_from_text(text, max_words_per_segment=9)
     if not lines:
-        lines = [text.strip()]
+        lines = [str(text or "").strip()]
+    measured_durations = None
+    if precise_timing:
+        measured_durations = _subtitle_timing_probe_with_tts(
+            lines,
+            tts_rate=tts_rate,
+            voice_style=voice_style,
+            voice_gender=voice_gender,
+        )
 
-    word_counts = [max(1, len(line.split())) for line in lines]
-    total_words = sum(word_counts)
+    if measured_durations and len(measured_durations) == len(lines):
+        weights = [max(0.06, value) for value in measured_durations]
+    else:
+        weights = _subtitle_segment_weights(lines)
+    segment_durations = _normalize_segment_durations(weights, max(0.01, total_duration))
 
     if subtitle_template == "bold_center":
         alignment = 5
@@ -864,9 +1877,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
     events = []
     start_time = 0.0
-    for line, count in zip(lines, word_counts):
-        segment_duration = (count / total_words) * total_duration
-        end_time = start_time + max(0.5, segment_duration)
+    for line, segment_duration in zip(lines, segment_durations):
+        end_time = start_time + max(0.08, segment_duration)
         start_stamp = _format_ass_time(start_time)
         end_stamp = _format_ass_time(end_time)
         escaped = line.replace("{", "\\{").replace("}", "\\}")
@@ -1178,6 +2190,7 @@ def _process_one_batch_row(row: dict) -> dict:
     if not match:
         raise ValueError(f"Library video not found: {library_ref}")
     video_path, video_entry = match
+    source_video_path = video_path
     video_code = str(video_entry.get("code") or library_ref).strip()
     text = row.get("_script_text") or ""
     tts_rate = 175
@@ -1226,6 +2239,31 @@ def _process_one_batch_row(row: dict) -> dict:
     output_mode = _resolve_output_mode(
         row.get("output_mode") or row.get("aspect_mode") or row.get("format_mode")
     )
+    video_strategy = _row_video_strategy(row)
+    video_source_mode = "single_library"
+    context_clip_count = 1
+    context_scene_categories: list[str] = []
+    context_scene_clips: list[str] = []
+    context_error = None
+    if video_strategy == "context_switch":
+        try:
+            stitched_path, clip_count, scene_categories, scene_clips = _build_context_background_video(
+                job_id=job_id,
+                text=text,
+                total_duration=duration,
+                output_mode=output_mode,
+                row=row,
+                fallback_video_path=source_video_path,
+            )
+            video_path = stitched_path
+            video_source_mode = "context_switch"
+            context_clip_count = max(1, clip_count)
+            context_scene_categories = scene_categories
+            context_scene_clips = scene_clips
+        except Exception as exc:
+            # Do not fail the row; fallback to single library video.
+            video_path = source_video_path
+            context_error = str(exc)
     target_w, target_h = _output_mode_resolution(output_mode)
     preset_style = _resolve_subtitle_style_preset(subtitle_preset)
     text_color = str(
@@ -1278,6 +2316,10 @@ def _process_one_batch_row(row: dict) -> dict:
         play_res_x=target_w,
         play_res_y=target_h,
         subtitle_template=subtitle_template,
+        tts_rate=tts_rate,
+        voice_style=voice_style,
+        voice_gender=voice_gender,
+        precise_timing=True,
     )
     output_path = OUTPUT_DIR / f"{job_id}_final.mp4"
     frame_filter = _build_smart_framing_filter(video_path, output_mode)
@@ -1288,6 +2330,11 @@ def _process_one_batch_row(row: dict) -> dict:
     bgm_path = _resolve_batch_bgm_path(row)
     bgm_volume = _resolve_bgm_volume(row.get("bgm_volume") or row.get("music_volume"))
     bgm_ducking = _to_bool(row.get("bgm_ducking"), default=True)
+    use_looped_video_input = video_source_mode != "context_switch"
+    video_input_args = ["-i", str(video_path)]
+    if use_looped_video_input:
+        video_input_args = ["-stream_loop", "-1", "-i", str(video_path)]
+
     if bgm_path:
         audio_filter_chain = _build_bgm_audio_filter_chain(
             bgm_volume=bgm_volume,
@@ -1298,10 +2345,7 @@ def _process_one_batch_row(row: dict) -> dict:
         ffmpeg_command = [
             "ffmpeg",
             "-y",
-            "-stream_loop",
-            "-1",
-            "-i",
-            str(video_path),
+            *video_input_args,
             "-i",
             str(voice_path),
             "-stream_loop",
@@ -1328,10 +2372,7 @@ def _process_one_batch_row(row: dict) -> dict:
         ffmpeg_command = [
             "ffmpeg",
             "-y",
-            "-stream_loop",
-            "-1",
-            "-i",
-            str(video_path),
+            *video_input_args,
             "-i",
             str(voice_path),
             "-t",
@@ -1358,10 +2399,7 @@ def _process_one_batch_row(row: dict) -> dict:
             fallback_command = [
                 "ffmpeg",
                 "-y",
-                "-stream_loop",
-                "-1",
-                "-i",
-                str(video_path),
+                *video_input_args,
                 "-i",
                 str(voice_path),
                 "-stream_loop",
@@ -1401,7 +2439,7 @@ def _process_one_batch_row(row: dict) -> dict:
             video_name = str(video_name).strip()
         else:
             video_name = str(video_entry.get("title") or video_code).strip()
-    return {
+    payload = {
         "job_id": job_id,
         "output_url": f"/api/download/{output_path.name}",
         "video_name": video_name,
@@ -1416,10 +2454,20 @@ def _process_one_batch_row(row: dict) -> dict:
         "subtitle_preset": subtitle_preset,
         "subtitle_template": subtitle_template,
         "output_mode": output_mode,
+        "video_source_mode": video_source_mode,
+        "video_strategy": video_strategy,
+        "context_clip_count": context_clip_count,
+        "context_scene_categories": context_scene_categories,
+        "context_scene_clips": context_scene_clips,
         "bgm_enabled": bool(bgm_path),
         "bgm_ducking": bgm_ducking if bgm_path else False,
         "bgm_volume": bgm_volume if bgm_path else 0.0,
     }
+    if context_error:
+        payload["context_error"] = context_error
+    return payload
+
+
 @app.post("/api/process")
 def process_video(
     background_video: UploadFile | None = File(None),
@@ -1436,6 +2484,10 @@ def process_video(
     subtitle_preset: str = Form("classic"),
     subtitle_template: str = Form("fade"),
     output_mode: str = Form("youtube"),
+    video_strategy: str = Form("single"),
+    category_hint: str = Form(""),
+    context_scene_count: int = Form(6),
+    context_lock_category: str = Form("true"),
     bgm_volume: str | None = Form(None),
     bgm_ducking: str | None = Form(None),
     voice_style: str = Form("professional"),
@@ -1462,6 +2514,7 @@ def process_video(
         subtitle_preset = "classic"
     subtitle_template = _resolve_subtitle_template(subtitle_template)
     output_mode = _resolve_output_mode(output_mode)
+    video_strategy = _row_video_strategy({"video_strategy": video_strategy})
     target_w, target_h = _output_mode_resolution(output_mode)
     voice_style = (voice_style or "professional").strip().lower()
     if voice_style not in VOICE_STYLE_PRESETS:
@@ -1480,6 +2533,15 @@ def process_video(
         video_path = UPLOAD_DIR / f"{job_id}_{_safe_filename(background_video.filename)}"
         with video_path.open("wb") as video_buffer:
             shutil.copyfileobj(background_video.file, video_buffer)
+    elif video_strategy == "context_switch":
+        video_path = _fallback_context_video_path(category_hint)
+        if video_path is None:
+            return JSONResponse(
+                {
+                    "error": "No library videos available for context switching. Add videos to data/video_library and catalog/index first."
+                },
+                status_code=400,
+            )
     else:
         return JSONResponse({"error": "Provide a background video or select a library code."}, status_code=400)
 
@@ -1513,6 +2575,40 @@ def process_video(
             shutil.copyfileobj(bgm_file.file, bgm_buffer)
 
     duration = _audio_duration_seconds(voice_path)
+    source_video_path = video_path
+    if library_code:
+        video_source_mode = "single_library"
+    elif background_video is not None:
+        video_source_mode = "single_upload"
+    else:
+        video_source_mode = "single_context_fallback"
+    context_clip_count = 1
+    context_scene_categories: list[str] = []
+    context_scene_clips: list[str] = []
+    context_error = None
+    if video_strategy == "context_switch":
+        try:
+            stitched_path, clip_count, scene_categories, scene_clips = _build_context_background_video(
+                job_id=job_id,
+                text=text,
+                total_duration=duration,
+                output_mode=output_mode,
+                row={
+                    "category_hint": category_hint,
+                    "context_scene_count": context_scene_count,
+                    "context_lock_category": context_lock_category,
+                },
+                fallback_video_path=source_video_path,
+            )
+            video_path = stitched_path
+            video_source_mode = "context_switch"
+            context_clip_count = max(1, clip_count)
+            context_scene_categories = scene_categories
+            context_scene_clips = scene_clips
+        except Exception as exc:
+            video_path = source_video_path
+            context_error = str(exc)
+
     subtitles_path = OUTPUT_DIR / f"{job_id}.ass"
 
     _build_ass_subtitles(
@@ -1535,6 +2631,10 @@ def process_video(
         play_res_x=target_w,
         play_res_y=target_h,
         subtitle_template=subtitle_template,
+        tts_rate=tts_rate,
+        voice_style=voice_style,
+        voice_gender=voice_gender,
+        precise_timing=True,
     )
 
     output_path = OUTPUT_DIR / f"{job_id}_final.mp4"
@@ -1544,6 +2644,10 @@ def process_video(
         f"subtitles=filename='{_ffmpeg_subtitles_path(subtitles_path)}':charenc=UTF-8"
     )
     video_filter_chain = f"{frame_filter},{subtitles_filter}"
+    use_looped_video_input = video_source_mode != "context_switch"
+    video_input_args = ["-i", str(video_path)]
+    if use_looped_video_input:
+        video_input_args = ["-stream_loop", "-1", "-i", str(video_path)]
     if bgm_path:
         audio_filter_chain = _build_bgm_audio_filter_chain(
             bgm_volume=bgm_volume_value,
@@ -1554,10 +2658,7 @@ def process_video(
         ffmpeg_command = [
             "ffmpeg",
             "-y",
-            "-stream_loop",
-            "-1",
-            "-i",
-            str(video_path),
+            *video_input_args,
             "-i",
             str(voice_path),
             "-stream_loop",
@@ -1584,10 +2685,7 @@ def process_video(
         ffmpeg_command = [
             "ffmpeg",
             "-y",
-            "-stream_loop",
-            "-1",
-            "-i",
-            str(video_path),
+            *video_input_args,
             "-i",
             str(voice_path),
             "-t",
@@ -1615,10 +2713,7 @@ def process_video(
             fallback_command = [
                 "ffmpeg",
                 "-y",
-                "-stream_loop",
-                "-1",
-                "-i",
-                str(video_path),
+                *video_input_args,
                 "-i",
                 str(voice_path),
                 "-stream_loop",
@@ -1650,24 +2745,29 @@ def process_video(
         else:
             return JSONResponse({"error": str(primary_error)}, status_code=500)
 
-    return JSONResponse(
-        {
-            "job_id": job_id,
-            "output_url": f"/api/download/{output_path.name}",
-            "ffmpeg_command": " ".join(ffmpeg_command),
-            "tts_engine": tts_engine,
-            "voice_style": voice_style,
-            "voice_gender": voice_gender,
-            "voice_model": voice_model,
-            "subtitle_preset": subtitle_preset,
-            "subtitle_template": subtitle_template,
-            "output_mode": output_mode,
-            "bgm_enabled": bool(bgm_path),
-            "bgm_ducking": bgm_ducking_value if bgm_path else False,
-            "bgm_volume": bgm_volume_value if bgm_path else 0.0,
-        }
-    
-    )
+    payload = {
+        "job_id": job_id,
+        "output_url": f"/api/download/{output_path.name}",
+        "ffmpeg_command": " ".join(ffmpeg_command),
+        "tts_engine": tts_engine,
+        "voice_style": voice_style,
+        "voice_gender": voice_gender,
+        "voice_model": voice_model,
+        "subtitle_preset": subtitle_preset,
+        "subtitle_template": subtitle_template,
+        "output_mode": output_mode,
+        "video_strategy": video_strategy,
+        "video_source_mode": video_source_mode,
+        "context_clip_count": context_clip_count,
+        "context_scene_categories": context_scene_categories,
+        "context_scene_clips": context_scene_clips,
+        "bgm_enabled": bool(bgm_path),
+        "bgm_ducking": bgm_ducking_value if bgm_path else False,
+        "bgm_volume": bgm_volume_value if bgm_path else 0.0,
+    }
+    if context_error:
+        payload["context_error"] = context_error
+    return JSONResponse(payload)
 
 
 @app.get("/api/batch/schema")
@@ -1698,6 +2798,9 @@ def batch_schema() -> JSONResponse:
                 {"key": "publish_at", "description": "Optional YouTube schedule time. Supports ISO format; converted to UTC for YouTube."},
                 {"key": "visibility", "description": "public, private, or unlisted. If set to private, video stays private even when publish_at is filled."},
                 {"key": "output_mode", "description": "youtube (16:9), shorts/reels (9:16), or square (1:1)."},
+                {"key": "video_strategy", "description": "single (default) or context_switch for scene-based background switching."},
+                {"key": "category_hint", "description": "Optional category hint for context_switch (e.g. motivation, finance, politics)."},
+                {"key": "context_scene_count", "description": "Optional max scene segments for context_switch (1-12, default 6)."},
                 {"key": "voice_style", "description": "professional, casual, narrator, energetic, calm, dramatic."},
                 {"key": "voice_gender", "description": "male or female."},
                 {"key": "voice_type", "description": "Optional pyttsx3 voice id/name override."},
@@ -1741,6 +2844,9 @@ def batch_template() -> StreamingResponse:
         "publish_at",
         "visibility",
         "output_mode",
+        "video_strategy",
+        "category_hint",
+        "context_scene_count",
         "voice_style",
         "voice_gender",
         "thumbnail_mode",
@@ -1772,6 +2878,9 @@ def batch_template() -> StreamingResponse:
         "2026-03-03T10:00",
         "private",
         "youtube",
+        "single",
+        "",
+        "6",
         "professional",
         "male",
         "auto",
@@ -1809,6 +2918,20 @@ def batch_template() -> StreamingResponse:
     subtitle_template_validation.promptTitle = "subtitle_template"
     sheet.add_data_validation(subtitle_template_validation)
     subtitle_template_validation.add(f"{subtitle_template_col_letter}2:{subtitle_template_col_letter}5000")
+
+    video_strategy_col = headers.index("video_strategy") + 1
+    video_strategy_col_letter = chr(64 + video_strategy_col)
+    video_strategy_validation = DataValidation(
+        type="list",
+        formula1='"single,context_switch"',
+        allow_blank=True,
+    )
+    video_strategy_validation.error = "Use single or context_switch."
+    video_strategy_validation.errorTitle = "Invalid video_strategy"
+    video_strategy_validation.prompt = "single = one library clip; context_switch = scene-based clip switching."
+    video_strategy_validation.promptTitle = "video_strategy"
+    sheet.add_data_validation(video_strategy_validation)
+    video_strategy_validation.add(f"{video_strategy_col_letter}2:{video_strategy_col_letter}5000")
 
     thumbnail_mode_col = headers.index("thumbnail_mode") + 1
     thumbnail_mode_col_letter = chr(64 + thumbnail_mode_col)
