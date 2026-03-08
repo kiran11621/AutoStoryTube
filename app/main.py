@@ -3263,6 +3263,7 @@ def batch_schema() -> JSONResponse:
                 {"key": "source_video", "description": "Alternative generic library selector (code/title/filename)."},
                 {"key": "video_description", "description": "Video description (e.g. for YouTube)."},
                 {"key": "video_tags", "description": "Comma-separated tags."},
+                {"key": "made_for_kids", "description": "yes/no. Optional, default no for YouTube audience setting."},
                 {"key": "publish_at", "description": "Optional YouTube schedule time. Supports ISO format; converted to UTC for YouTube."},
                 {"key": "visibility", "description": "public, private, or unlisted. If set to private, video stays private even when publish_at is filled."},
                 {"key": "output_mode", "description": "youtube (16:9), shorts/reels (9:16), or square (1:1)."},
@@ -3323,6 +3324,7 @@ def batch_template() -> StreamingResponse:
         "output_video_name",
         "video_description",
         "video_tags",
+        "made_for_kids",
         "publish_at",
         "visibility",
         "output_mode",
@@ -3369,6 +3371,7 @@ def batch_template() -> StreamingResponse:
         "My Batch Video",
         "Generated from batch template.",
         "story,automation",
+        "no",
         "2026-03-03T10:00",
         "private",
         "youtube",
@@ -3466,6 +3469,20 @@ def batch_template() -> StreamingResponse:
     bgm_ducking_validation.promptTitle = "bgm_ducking"
     sheet.add_data_validation(bgm_ducking_validation)
     bgm_ducking_validation.add(f"{bgm_ducking_col_letter}2:{bgm_ducking_col_letter}5000")
+
+    made_for_kids_col = headers.index("made_for_kids") + 1
+    made_for_kids_col_letter = chr(64 + made_for_kids_col)
+    made_for_kids_validation = DataValidation(
+        type="list",
+        formula1='"yes,no"',
+        allow_blank=True,
+    )
+    made_for_kids_validation.error = "Use yes or no."
+    made_for_kids_validation.errorTitle = "Invalid made_for_kids"
+    made_for_kids_validation.prompt = "Optional YouTube audience setting. Default is no."
+    made_for_kids_validation.promptTitle = "made_for_kids"
+    sheet.add_data_validation(made_for_kids_validation)
+    made_for_kids_validation.add(f"{made_for_kids_col_letter}2:{made_for_kids_col_letter}5000")
 
     output = BytesIO()
     workbook.save(output)
@@ -3751,6 +3768,7 @@ def process_batch_youtube(excel_file: UploadFile = File(...)) -> JSONResponse:
             ).strip()
             description = str(row.get("video_description") or "").strip()
             tags = [tag.strip() for tag in str(row.get("video_tags") or "").split(",") if tag.strip()]
+            made_for_kids = _to_bool(row.get("made_for_kids"), default=False)
 
             raw_visibility = str(row.get("visibility") or "private").strip().lower()
             safe_visibility = (
@@ -3761,12 +3779,16 @@ def process_batch_youtube(excel_file: UploadFile = File(...)) -> JSONResponse:
             publish_at_input = str(row.get("publish_at") or "").strip()
             rfc3339_publish_at = _parse_publish_at(publish_at_input)
             if rfc3339_publish_at and safe_visibility != "private":
-                status_dict: dict[str, str] = {
+                status_dict: dict[str, object] = {
                     "privacyStatus": "private",
                     "publishAt": rfc3339_publish_at,
+                    "selfDeclaredMadeForKids": made_for_kids,
                 }
             else:
-                status_dict = {"privacyStatus": safe_visibility}
+                status_dict = {
+                    "privacyStatus": safe_visibility,
+                    "selfDeclaredMadeForKids": made_for_kids,
+                }
 
             request_body = {
                 "snippet": {

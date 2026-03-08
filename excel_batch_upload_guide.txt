@@ -16,6 +16,7 @@
 - subtitle_preset: classic, viral, reels, cinematic
 - subtitle_template: fade, bold_center, karaoke_word_by_word, bounce_fade, beat_sync
 - subtitle_placement: top, middle, bottom
+- made_for_kids: yes, no (default no if blank)
 
 3. Numeric limits
 - context_scene_count: 1-12 (default 6)
@@ -32,6 +33,7 @@
 4. Boolean fields
 - logo_animated, end_screen_blocks, bgm_ducking, subtitle_bold, subtitle_italic
 - Use true/false (also accepts yes/on/1 as true)
+- made_for_kids also accepts true/false style values, but use yes/no in Excel for clarity
 
 5. Date-time rule
 - publish_at must be future ISO datetime (example: 2026-03-10T10:30)
