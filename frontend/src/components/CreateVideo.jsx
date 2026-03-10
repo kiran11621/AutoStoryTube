@@ -15,6 +15,7 @@ import {
 	Clapperboard,
 	Video,
 	FileText,
+	Image,
 	SlidersHorizontal,
 	Mars,
 	Venus,
@@ -155,6 +156,11 @@ export default function CreateVideo() {
 	const [bgmFile, setBgmFile] = useState(null);
 	const [bgmVolume, setBgmVolume] = useState(18);
 	const [bgmDucking, setBgmDucking] = useState(true);
+	const [endLogoFile, setEndLogoFile] = useState(null);
+	const [endLogoPosition, setEndLogoPosition] = useState("center");
+	const [endLogoScale, setEndLogoScale] = useState(20);
+	const [endLogoDuration, setEndLogoDuration] = useState(6);
+	const [endLogoAnimated, setEndLogoAnimated] = useState(false);
 	const [voiceStyle, setVoiceStyle] = useState("professional");
 	const [voiceGender, setVoiceGender] = useState("male");
 	const [outputMode, setOutputMode] = useState("youtube");
@@ -266,6 +272,21 @@ export default function CreateVideo() {
 		},
 		multiple: false,
 	});
+	const {
+		getRootProps: getEndLogoProps,
+		getInputProps: getEndLogoInputProps,
+		isDragActive: isEndLogoDragActive,
+	} = useDropzone({
+		onDrop: (acceptedFiles) => {
+			setEndLogoFile(acceptedFiles[0] || null);
+		},
+		accept: {
+			"image/png": [".png"],
+			"image/jpeg": [".jpg", ".jpeg"],
+			"image/webp": [".webp"],
+		},
+		multiple: false,
+	});
 
 	const handleGenerate = async () => {
 		const hasLibraryCode = Boolean(libraryCode.trim());
@@ -329,6 +350,13 @@ export default function CreateVideo() {
 			if (bgmFile) {
 				formData.append("bgm_file", bgmFile);
 			}
+			if (endLogoFile) {
+				formData.append("end_logo_file", endLogoFile);
+				formData.append("end_logo_position", endLogoPosition);
+				formData.append("end_logo_scale_percent", String(endLogoScale));
+				formData.append("end_logo_duration_sec", String(endLogoDuration));
+				formData.append("end_logo_animated", endLogoAnimated ? "true" : "false");
+			}
 			formData.append("voice_style", voiceStyle);
 			formData.append("voice_gender", voiceGender);
 
@@ -360,6 +388,8 @@ export default function CreateVideo() {
 		if (!outputUrl) return;
 		window.open(outputUrl, "_blank", "noopener,noreferrer");
 	};
+
+	const endLogoDisabled = !endLogoFile;
 
 	return (
 		<div className="w-full bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 rounded-2xl p-5 md:p-6">
@@ -515,6 +545,111 @@ export default function CreateVideo() {
 							>
 								{bgmDucking ? "On" : "Off"}
 							</button>
+						</div>
+					</motion.div>
+
+					{/* Ending Logo */}
+					<motion.div className="space-y-3">
+						<label className="text-slate-300 font-semibold flex items-center gap-2">
+							<Image className="w-4 h-4 text-cyan-400" />
+							Ending Logo (Optional)
+						</label>
+						<motion.div
+							{...getEndLogoProps()}
+							className={`rounded-xl p-5 border-2 border-dashed transition-all cursor-pointer ${
+								isEndLogoDragActive
+									? "border-cyan-400 bg-cyan-500/10"
+									: "border-slate-600 bg-slate-800/50 hover:border-cyan-400"
+							}`}
+							whileHover={{ scale: 1.01 }}
+						>
+							<input {...getEndLogoInputProps()} />
+							<div className="text-center">
+								<div className="text-2xl mb-2 flex items-center justify-center gap-2">
+									<Image className="w-5 h-5 text-cyan-400" />
+									<span>Logo</span>
+								</div>
+								<p className="text-slate-300 text-sm font-semibold truncate">
+									{endLogoFile
+										? endLogoFile.name
+										: "Optional PNG/JPG logo for the ending"}
+								</p>
+								<p className="text-slate-500 text-xs mt-1">
+									drag/drop or click to browse
+								</p>
+							</div>
+						</motion.div>
+						<div
+							className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 ${
+								endLogoDisabled ? "opacity-60" : ""
+							}`}
+						>
+							<div className="rounded-xl border border-slate-700 bg-slate-800/60 px-4 py-3">
+								<label className="text-xs text-slate-400 block mb-2">
+									Position
+								</label>
+								<select
+									value={endLogoPosition}
+									onChange={(e) => setEndLogoPosition(e.target.value)}
+									disabled={endLogoDisabled}
+									className="w-full rounded-lg border border-slate-700 bg-slate-900/80 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 disabled:cursor-not-allowed disabled:opacity-70"
+								>
+									<option value="center">Center</option>
+									<option value="top-left">Top Left</option>
+									<option value="top-right">Top Right</option>
+									<option value="bottom-left">Bottom Left</option>
+									<option value="bottom-right">Bottom Right</option>
+								</select>
+							</div>
+							<div className="rounded-xl border border-slate-700 bg-slate-800/60 px-4 py-3">
+								<label className="text-xs text-slate-400 block mb-2">
+									Scale ({endLogoScale}%)
+								</label>
+								<input
+									type="range"
+									min="5"
+									max="40"
+									value={endLogoScale}
+									onChange={(e) => setEndLogoScale(Number(e.target.value))}
+									disabled={endLogoDisabled}
+									className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-cyan-500 disabled:cursor-not-allowed"
+								/>
+							</div>
+							<div className="rounded-xl border border-slate-700 bg-slate-800/60 px-4 py-3">
+								<label className="text-xs text-slate-400 block mb-2">
+									Duration (sec)
+								</label>
+								<input
+									type="number"
+									min="2"
+									max="20"
+									value={endLogoDuration}
+									onChange={(e) =>
+										setEndLogoDuration(
+											Math.max(2, Math.min(20, Number(e.target.value) || 6)),
+										)
+									}
+									disabled={endLogoDisabled}
+									className="w-full rounded-lg border border-slate-700 bg-slate-900/80 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 disabled:cursor-not-allowed disabled:opacity-70"
+								/>
+							</div>
+							<div className="rounded-xl border border-slate-700 bg-slate-800/60 px-4 py-3 flex items-center justify-between">
+								<span className="text-slate-300 text-sm font-medium">
+									Animated fade-in
+								</span>
+								<button
+									type="button"
+									onClick={() => setEndLogoAnimated((prev) => !prev)}
+									disabled={endLogoDisabled}
+									className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
+										endLogoAnimated
+											? "border-cyan-400/60 bg-cyan-500/20 text-cyan-200"
+											: "border-slate-700 bg-slate-900/50 text-slate-300"
+									} disabled:cursor-not-allowed disabled:opacity-70`}
+								>
+									{endLogoAnimated ? "On" : "Off"}
+								</button>
+							</div>
 						</div>
 					</motion.div>
 
