@@ -132,6 +132,19 @@ AutoStoryTube/
    - End credits: add optional closing text during the last N seconds of the video.
    - Shorts mode: converts the upload to vertical 1080x1920 and trims to 59 seconds.
 
+### YouTube client secret upload (UI)
+
+If you don’t want to copy `client_secret.json` into `data/credentials` manually,
+use the YouTube Upload or Bulk Upload UI to upload the JSON file. The server
+saves it as:
+
+```
+data/credentials/client_secret.json
+```
+
+Uploading a new client secret clears any existing `token.json`, so you’ll need
+to authorize YouTube again.
+
 ### Single render (Create Video) optional fields
 
 These are sent to `/api/process` (single render). They are not part of the Excel batch schema.

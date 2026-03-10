@@ -4006,6 +4006,46 @@ def _load_credentials() -> Credentials | None:
     return creds
 
 
+def _validate_client_secret_payload(payload: dict) -> str | None:
+    if not isinstance(payload, dict):
+        return "Invalid JSON structure."
+    container = None
+    if isinstance(payload.get("installed"), dict):
+        container = payload["installed"]
+    elif isinstance(payload.get("web"), dict):
+        container = payload["web"]
+    if not isinstance(container, dict):
+        return "Missing 'installed' or 'web' OAuth section."
+    if not str(container.get("client_id") or "").strip():
+        return "Missing client_id in OAuth section."
+    if not str(container.get("client_secret") or "").strip():
+        return "Missing client_secret in OAuth section."
+    return None
+
+
+@app.post("/api/youtube/client-secret")
+def upload_client_secret(client_secret: UploadFile = File(...)) -> JSONResponse:
+    if not client_secret.filename or not str(client_secret.filename).lower().endswith(".json"):
+        return JSONResponse({"error": "Please upload a .json client secret file."}, status_code=400)
+    try:
+        raw = client_secret.file.read()
+        payload = json.loads(raw.decode("utf-8"))
+    except Exception:
+        return JSONResponse({"error": "Unable to read client secret JSON."}, status_code=400)
+
+    error = _validate_client_secret_payload(payload)
+    if error:
+        return JSONResponse({"error": error}, status_code=400)
+
+    CREDENTIALS_DIR.mkdir(parents=True, exist_ok=True)
+    CLIENT_SECRET_PATH.write_text(
+        json.dumps(payload, indent=2), encoding="utf-8"
+    )
+    os.chmod(CLIENT_SECRET_PATH, 0o600)
+    TOKEN_PATH.unlink(missing_ok=True)
+    return JSONResponse({"status": "ok"})
+
+
 @app.get("/api/youtube/auth-url")
 def youtube_auth_url() -> JSONResponse:
     if not CLIENT_SECRET_PATH.exists():

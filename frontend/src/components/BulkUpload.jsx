@@ -8,6 +8,7 @@ import {
 	ExternalLink,
 	FileSpreadsheet,
 	Loader2,
+	Upload,
 } from "lucide-react";
 
 export default function BulkUpload() {
@@ -22,6 +23,8 @@ export default function BulkUpload() {
 	const [uploadToYoutube, setUploadToYoutube] = useState(false);
 	const [isAuthorizing, setIsAuthorizing] = useState(false);
 	const [authMessage, setAuthMessage] = useState("");
+	const [clientSecretFile, setClientSecretFile] = useState(null);
+	const [clientSecretStatus, setClientSecretStatus] = useState("");
 	const progressTimerRef = useRef(null);
 	const activeRequestRef = useRef(0);
 
@@ -175,6 +178,37 @@ export default function BulkUpload() {
 		}
 	};
 
+	const handleClientSecretChange = (e) => {
+		const file = e.target.files[0];
+		setClientSecretStatus("");
+		setClientSecretFile(file || null);
+	};
+
+	const handleClientSecretUpload = async () => {
+		if (!clientSecretFile) {
+			setClientSecretStatus("Select a client_secret.json file first.");
+			return;
+		}
+		setClientSecretStatus("Uploading client secret...");
+		try {
+			const payload = new FormData();
+			payload.append("client_secret", clientSecretFile);
+			const response = await fetch("/api/youtube/client-secret", {
+				method: "POST",
+				body: payload,
+			});
+			const data = await response.json();
+			if (!response.ok) {
+				throw new Error(data?.error || "Upload failed.");
+			}
+			setClientSecretStatus(
+				"Client secret saved. Please connect YouTube to authorize.",
+			);
+		} catch (err) {
+			setClientSecretStatus(err?.message || "Upload failed.");
+		}
+	};
+
 	return (
 		<div className="w-full bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 rounded-2xl p-5 md:p-6">
 			<div className="max-w-3xl mx-auto">
@@ -226,6 +260,38 @@ export default function BulkUpload() {
 						</div>
 						{templateStatus ? (
 							<div className="mt-3 text-xs text-slate-400">{templateStatus}</div>
+						) : null}
+					</div>
+
+					<div className="rounded-2xl border border-slate-700/70 bg-slate-900/60 p-4 md:p-5 space-y-3">
+						<div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+							<div>
+								<p className="text-sm text-slate-300 font-semibold">
+									Client Secret (JSON)
+								</p>
+								<p className="text-xs text-slate-500 mt-1">
+									Upload your Google OAuth client secret to enable YouTube auth.
+								</p>
+							</div>
+							<div className="flex flex-col sm:flex-row gap-2">
+								<input
+									type="file"
+									accept="application/json,.json"
+									onChange={handleClientSecretChange}
+									className="w-full sm:w-auto px-3 py-2 bg-slate-800/80 border border-slate-700 rounded-lg text-white file:mr-3 file:rounded-md file:border-0 file:bg-slate-700 file:px-3 file:py-1.5 file:text-slate-100"
+								/>
+								<button
+									type="button"
+									onClick={handleClientSecretUpload}
+									className="inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition bg-cyan-600/90 text-cyan-50 hover:bg-cyan-500"
+								>
+									<Upload className="w-4 h-4" />
+									Upload JSON
+								</button>
+							</div>
+						</div>
+						{clientSecretStatus ? (
+							<p className="text-xs text-slate-400">{clientSecretStatus}</p>
 						) : null}
 					</div>
 
