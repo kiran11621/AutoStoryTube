@@ -580,6 +580,8 @@ def _apply_logo_overlay_to_video(
     logo_position: str,
     logo_scale_percent: int,
     logo_animated: bool = False,
+    start_at: float | None = None,
+    end_at: float | None = None,
 ) -> None:
     position_map = {
         "top-left": "20:20",
@@ -590,16 +592,31 @@ def _apply_logo_overlay_to_video(
     }
     overlay_expr = position_map.get(logo_position, position_map["top-right"])
     scale_factor = max(5, min(40, logo_scale_percent)) / 100.0
+    enable_expr = ""
+    logo_start_offset = 0.0
+    if start_at is not None or end_at is not None:
+        start_value = max(0.0, float(start_at or 0.0))
+        end_value = float(end_at) if end_at is not None else start_value
+        end_value = max(start_value, end_value)
+        enable_expr = f":enable='between(t,{start_value:.3f},{end_value:.3f})'"
+        logo_start_offset = start_value
     if logo_animated:
+        if logo_start_offset > 0:
+            logo_chain = (
+                f"[logo]format=rgba,fade=t=in:st=0:d=1.2:alpha=1,"
+                f"setpts=PTS-STARTPTS+{logo_start_offset:.3f}/TB[logoa];"
+            )
+        else:
+            logo_chain = "[logo]format=rgba,fade=t=in:st=0:d=1.2:alpha=1[logoa];"
         filter_complex = (
             f"[1:v][0:v]scale2ref=w=iw*{scale_factor:.4f}:h=ow/mdar[logo][base];"
-            "[logo]format=rgba,fade=t=in:st=0:d=1.2:alpha=1[logoa];"
-            f"[base][logoa]overlay={overlay_expr}[v]"
+            f"{logo_chain}"
+            f"[base][logoa]overlay={overlay_expr}{enable_expr}[v]"
         )
     else:
         filter_complex = (
             f"[1:v][0:v]scale2ref=w=iw*{scale_factor:.4f}:h=ow/mdar[logo][base];"
-            f"[base][logo]overlay={overlay_expr}[v]"
+            f"[base][logo]overlay={overlay_expr}{enable_expr}[v]"
         )
     command = [
         "ffmpeg",
@@ -736,6 +753,30 @@ def _apply_end_credits_to_video(
         str(output_path),
     ]
     _run_ffmpeg(command)
+
+
+def _apply_end_logo_overlay_to_video(
+    video_path: Path,
+    logo_path: Path,
+    output_path: Path,
+    logo_position: str,
+    logo_scale_percent: int,
+    logo_animated: bool,
+    logo_duration_sec: int,
+) -> None:
+    duration = _video_duration_seconds(video_path)
+    end_window = max(2, min(20, int(logo_duration_sec)))
+    start_at = max(0.0, duration - float(end_window))
+    _apply_logo_overlay_to_video(
+        video_path=video_path,
+        logo_path=logo_path,
+        output_path=output_path,
+        logo_position=logo_position,
+        logo_scale_percent=logo_scale_percent,
+        logo_animated=logo_animated,
+        start_at=start_at,
+        end_at=duration,
+    )
 
 
 def _apply_branding_overlays_to_video(
@@ -2952,6 +2993,11 @@ def process_video(
     bgm_ducking: str | None = Form(None),
     voice_style: str = Form("professional"),
     voice_gender: str = Form("male"),
+    end_logo_file: UploadFile | None = File(None),
+    end_logo_position: str = Form("center"),
+    end_logo_scale_percent: str = Form("20"),
+    end_logo_duration_sec: str = Form("6"),
+    end_logo_animated: str = Form(""),
 ) -> JSONResponse:
     preset_style = _resolve_subtitle_style_preset(subtitle_preset)
     text_color = str(text_color or preset_style["text_color"]).strip()
@@ -3212,6 +3258,44 @@ def process_video(
         else:
             return JSONResponse({"error": str(primary_error)}, status_code=500)
 
+    end_logo_applied = False
+    end_logo_error = None
+    if end_logo_file is not None and str(end_logo_file.filename or "").strip():
+        safe_logo_name = _safe_filename(end_logo_file.filename or "end_logo.png")
+        end_logo_path = OUTPUT_DIR / f"{job_id}_end_logo_{safe_logo_name}"
+        with end_logo_path.open("wb") as logo_buffer:
+            shutil.copyfileobj(end_logo_file.file, logo_buffer)
+        resolved_end_logo_position = (
+            end_logo_position
+            if end_logo_position
+            in {"top-left", "top-right", "bottom-left", "bottom-right", "center"}
+            else "center"
+        )
+        resolved_end_logo_scale = _coerce_int(
+            end_logo_scale_percent, default=20, min_value=5, max_value=40
+        )
+        resolved_end_logo_duration = _coerce_int(
+            end_logo_duration_sec, default=6, min_value=2, max_value=20
+        )
+        resolved_end_logo_animated = _to_bool(end_logo_animated, default=False)
+        end_logo_output_path = OUTPUT_DIR / f"{job_id}_end_logo_tmp.mp4"
+        try:
+            _apply_end_logo_overlay_to_video(
+                video_path=output_path,
+                logo_path=end_logo_path,
+                output_path=end_logo_output_path,
+                logo_position=resolved_end_logo_position,
+                logo_scale_percent=resolved_end_logo_scale,
+                logo_animated=resolved_end_logo_animated,
+                logo_duration_sec=resolved_end_logo_duration,
+            )
+            if end_logo_output_path.exists():
+                output_path.unlink(missing_ok=True)
+                end_logo_output_path.replace(output_path)
+            end_logo_applied = True
+        except Exception as logo_exc:
+            end_logo_error = str(logo_exc)
+
     payload = {
         "job_id": job_id,
         "output_url": f"/api/download/{output_path.name}",
@@ -3232,7 +3316,10 @@ def process_video(
         "audio_library_ref": str(audio_library_ref or "").strip() if bgm_path else "",
         "bgm_ducking": bgm_ducking_value if bgm_path else False,
         "bgm_volume": bgm_volume_value if bgm_path else 0.0,
+        "end_logo_applied": end_logo_applied,
     }
+    if end_logo_error:
+        payload["end_logo_error"] = end_logo_error
     if context_error:
         payload["context_error"] = context_error
     return JSONResponse(payload)
@@ -3917,6 +4004,46 @@ def _load_credentials() -> Credentials | None:
         TOKEN_PATH.write_text(creds.to_json(), encoding="utf-8")
         os.chmod(TOKEN_PATH, 0o600)
     return creds
+
+
+def _validate_client_secret_payload(payload: dict) -> str | None:
+    if not isinstance(payload, dict):
+        return "Invalid JSON structure."
+    container = None
+    if isinstance(payload.get("installed"), dict):
+        container = payload["installed"]
+    elif isinstance(payload.get("web"), dict):
+        container = payload["web"]
+    if not isinstance(container, dict):
+        return "Missing 'installed' or 'web' OAuth section."
+    if not str(container.get("client_id") or "").strip():
+        return "Missing client_id in OAuth section."
+    if not str(container.get("client_secret") or "").strip():
+        return "Missing client_secret in OAuth section."
+    return None
+
+
+@app.post("/api/youtube/client-secret")
+def upload_client_secret(client_secret: UploadFile = File(...)) -> JSONResponse:
+    if not client_secret.filename or not str(client_secret.filename).lower().endswith(".json"):
+        return JSONResponse({"error": "Please upload a .json client secret file."}, status_code=400)
+    try:
+        raw = client_secret.file.read()
+        payload = json.loads(raw.decode("utf-8"))
+    except Exception:
+        return JSONResponse({"error": "Unable to read client secret JSON."}, status_code=400)
+
+    error = _validate_client_secret_payload(payload)
+    if error:
+        return JSONResponse({"error": error}, status_code=400)
+
+    CREDENTIALS_DIR.mkdir(parents=True, exist_ok=True)
+    CLIENT_SECRET_PATH.write_text(
+        json.dumps(payload, indent=2), encoding="utf-8"
+    )
+    os.chmod(CLIENT_SECRET_PATH, 0o600)
+    TOKEN_PATH.unlink(missing_ok=True)
+    return JSONResponse({"status": "ok"})
 
 
 @app.get("/api/youtube/auth-url")
