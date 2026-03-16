@@ -9,6 +9,8 @@ import wave
 from io import BytesIO
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib import request as urlrequest
+from urllib import error as urlerror
 
 import pyttsx3
 
@@ -63,6 +65,12 @@ THUMBNAILS_DIR.mkdir(parents=True, exist_ok=True)
 PIPER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
 
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-flash-latest").strip()
+GEMINI_ENDPOINT = os.getenv(
+    "GEMINI_ENDPOINT",
+    f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent",
+).strip()
 VOICE_STYLE_PRESETS = {
     "professional": {"rate_adjust": -5},
     "casual": {"rate_adjust": 5},
@@ -539,9 +547,130 @@ def audio_library_catalog() -> JSONResponse:
     return JSONResponse({"audio": _load_audio_catalog()})
 
 
+@app.get("/api/library/thumbnail")
+def library_thumbnail(code: str = "") -> FileResponse:
+    match = _library_video_by_reference(code)
+    if not match:
+        raise HTTPException(status_code=404, detail="Library video not found.")
+    video_path, entry = match
+    filename = str(entry.get("filename") or video_path.name)
+    thumb_name = _safe_filename(f"video_{Path(filename).stem}.jpg")
+    thumb_path = THUMBNAILS_DIR / thumb_name
+    if not thumb_path.exists():
+        _generate_thumbnail_from_video(video_path, thumb_path)
+    return FileResponse(thumb_path)
+
+
+@app.get("/api/audio-library/thumbnail")
+def audio_library_thumbnail(ref: str = "") -> FileResponse:
+    match = _library_audio_by_reference(ref)
+    if not match:
+        raise HTTPException(status_code=404, detail="Audio library track not found.")
+    audio_path, entry = match
+    filename = str(entry.get("filename") or audio_path.name)
+    thumb_name = _safe_filename(f"audio_{Path(filename).stem}.png")
+    thumb_path = THUMBNAILS_DIR / thumb_name
+    if not thumb_path.exists():
+        _generate_waveform_thumbnail(audio_path, thumb_path)
+    return FileResponse(thumb_path)
+
+
 @app.get("/api/branding-packs")
 def branding_packs() -> JSONResponse:
     return JSONResponse({"packs": _load_branding_packs()})
+
+
+@app.post("/api/story/generate")
+async def generate_story(request: Request) -> JSONResponse:
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON payload."}, status_code=400)
+
+    prompt = str(payload.get("prompt") or "").strip()
+    if not prompt:
+        return JSONResponse({"error": "Prompt is required."}, status_code=400)
+
+    language = str(payload.get("language") or "English").strip()
+    tone = str(payload.get("tone") or "Dramatic").strip()
+    length = str(payload.get("length") or "2 minutes").strip()
+
+    story_bundle = _gemini_generate_story(prompt, language, tone, length)
+    response_payload = {
+        "title": story_bundle["title"],
+        "story": story_bundle["story"],
+        "description": story_bundle["description"],
+        "tags": story_bundle["tags"],
+    }
+
+    return JSONResponse(response_payload)
+
+
+@app.post("/api/story/render")
+async def render_story_video(request: Request) -> JSONResponse:
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON payload."}, status_code=400)
+
+    story = str(payload.get("story") or "").strip()
+    if not story:
+        return JSONResponse({"error": "Story is required."}, status_code=400)
+
+    mode = str(payload.get("mode") or "generate_video").strip().lower()
+    title = str(payload.get("title") or "Generated Story").strip()
+    description = str(payload.get("description") or "").strip()
+    tags_raw = payload.get("tags") or ""
+    tags = _normalize_tags(tags_raw)
+    if not tags:
+        tags = _build_local_tags(" ".join([title, story]), "")
+
+    category_hint = _infer_category_from_prompt(" ".join([title] + tags))
+    response_payload = {
+        "video": {"status": "skipped", "outputUrl": None, "error": None},
+        "upload": {"status": "skipped", "youtubeUrl": None},
+    }
+    try:
+        video_result = _generate_video_from_story(
+            story=story,
+            title=title,
+            description=description,
+            tags=tags,
+            category_hint=category_hint,
+        )
+        response_payload["video"] = {
+            "status": "ready",
+            "outputUrl": video_result["output_url"],
+            "error": None,
+        }
+        if mode == "generate_upload":
+            upload_result = _youtube_upload_from_path(
+                video_path=video_result["video_path"],
+                title=title,
+                description=description,
+                tags=tags,
+            )
+            response_payload["upload"] = {
+                "status": "uploaded",
+                "youtubeUrl": upload_result.get("video_url"),
+                "videoId": upload_result.get("video_id"),
+                "thumbnailSource": upload_result.get("thumbnail_source"),
+                "thumbnailError": upload_result.get("thumbnail_error"),
+            }
+    except Exception as exc:
+        response_payload["video"] = {
+            "status": "failed",
+            "outputUrl": None,
+            "error": str(exc),
+        }
+        if mode == "generate_upload":
+            response_payload["upload"] = {
+                "status": "failed",
+                "youtubeUrl": None,
+                "error": str(exc),
+            }
+
+    return JSONResponse(response_payload)
 
 
 def _run_ffmpeg(command: list[str]) -> None:
@@ -552,6 +681,528 @@ def _run_ffmpeg(command: list[str]) -> None:
 
 def _safe_filename(name: str) -> str:
     return re.sub(r"[^a-zA-Z0-9._-]", "_", name)
+
+
+def _extract_json_block(text: str) -> str | None:
+    if not text:
+        return None
+    cleaned = str(text).strip()
+    if cleaned.startswith("{") and cleaned.endswith("}"):
+        return cleaned
+    match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+    if match:
+        return match.group(0)
+    return None
+
+
+def _strip_code_fences(text: str) -> str:
+    if not text:
+        return ""
+    cleaned = str(text).strip()
+    if "```" not in cleaned:
+        return cleaned
+    cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s*```$", "", cleaned)
+    return cleaned.strip()
+
+
+def _repair_json_text(text: str) -> str:
+    if not text:
+        return ""
+    cleaned = _strip_code_fences(text)
+    start = cleaned.find("{")
+    if start == -1:
+        return cleaned
+    end = cleaned.rfind("}")
+    if end == -1:
+        return cleaned[start:] + "}"
+    return cleaned[start : end + 1]
+
+
+def _best_effort_story_bundle(raw_text: str, fallback_prompt: str) -> dict | None:
+    if not raw_text:
+        return None
+    text = _strip_code_fences(raw_text)
+    title_match = re.search(r'"title"\s*:\s*"([^"]+)"', text)
+    story_match = re.search(r'"story"\s*:\s*"(.*)', text, re.DOTALL)
+    title = title_match.group(1).strip() if title_match else ""
+    story = ""
+    if story_match:
+        story_chunk = story_match.group(1)
+        stop = re.search(r'"\s*,\s*"description"\s*:', story_chunk)
+        if stop:
+            story_chunk = story_chunk[: stop.start()]
+        stop_tags = re.search(r'"\s*,\s*"tags"\s*:', story_chunk)
+        if stop_tags:
+            story_chunk = story_chunk[: stop_tags.start()]
+        story = story_chunk.strip().rstrip('"').strip()
+    if not story:
+        # Avoid returning raw JSON fragments as the story.
+        if '"title"' in text or '"story"' in text:
+            story = str(fallback_prompt or "").strip()
+        else:
+            story = text.strip()
+    if story.startswith("{"):
+        story = story.lstrip("{").strip()
+    if story.endswith("}"):
+        story = story.rstrip("}").strip()
+    story = story.replace("\\n", "\n").replace("\\\"", "\"").strip()
+    if not title:
+        words = re.findall(r"\w+", story)
+        title = " ".join(words[:6]).strip() if words else "Generated Story"
+    if not story:
+        return None
+    description = " ".join(re.split(r"(?<=[.!?])\s+", story)[:2]).strip()
+    tags = _build_local_tags(" ".join([title, story]), fallback_prompt)
+    return {
+        "title": title,
+        "story": story,
+        "description": description,
+        "tags": tags,
+    }
+
+
+def _gemini_fix_json(raw_text: str) -> dict:
+    if not GEMINI_API_KEY:
+        raise RuntimeError("Missing GEMINI_API_KEY environment variable.")
+    fix_prompt = (
+        "Convert the following text into valid JSON with keys: "
+        "title, story, description, tags (array of strings). "
+        "Return ONLY JSON, no markdown.\n\nTEXT:\n"
+        f"{raw_text}"
+    )
+    payload = {
+        "contents": [{"role": "user", "parts": [{"text": fix_prompt}]}],
+        "generationConfig": {
+            "temperature": 0.2,
+            "topP": 0.8,
+            "maxOutputTokens": 800,
+            "responseMimeType": "application/json",
+        },
+    }
+    req = urlrequest.Request(
+        GEMINI_ENDPOINT,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "X-goog-api-key": GEMINI_API_KEY,
+        },
+        method="POST",
+    )
+    try:
+        with urlrequest.urlopen(req, timeout=45) as resp:
+            raw = resp.read().decode("utf-8")
+    except urlerror.HTTPError as exc:
+        detail = exc.read().decode("utf-8") if exc.fp else str(exc)
+        raise RuntimeError(f"Gemini JSON-fix API error: {detail}") from exc
+    except urlerror.URLError as exc:
+        raise RuntimeError(f"Gemini JSON-fix connection error: {exc}") from exc
+
+    try:
+        response_payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("Gemini JSON-fix returned invalid JSON.") from exc
+
+    candidates = response_payload.get("candidates") or []
+    if not candidates:
+        raise RuntimeError("Gemini JSON-fix returned no candidates.")
+    content = candidates[0].get("content") or {}
+    parts = content.get("parts") or []
+    text_parts = []
+    for part in parts:
+        if isinstance(part, dict) and part.get("text"):
+            text_parts.append(str(part.get("text")))
+    text = _strip_code_fences("\n".join(text_parts).strip())
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        json_block = _extract_json_block(text)
+        if json_block:
+            try:
+                data = json.loads(json_block)
+            except json.JSONDecodeError as exc2:
+                raise RuntimeError("Gemini JSON-fix could not parse content.") from exc2
+        else:
+            raise RuntimeError("Gemini JSON-fix did not include JSON content.") from exc
+    if not isinstance(data, dict):
+        raise RuntimeError("Gemini JSON-fix did not return a JSON object.")
+    return data
+
+
+def _normalize_tags(tags: list[str] | str | None) -> list[str]:
+    if tags is None:
+        return []
+    if isinstance(tags, str):
+        raw = [t.strip() for t in tags.split(",")]
+    elif isinstance(tags, list):
+        raw = [str(t).strip() for t in tags if str(t).strip()]
+    else:
+        raw = []
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for tag in raw:
+        if not tag:
+            continue
+        lower = tag.lower()
+        if lower in seen:
+            continue
+        seen.add(lower)
+        deduped.append(tag)
+    return deduped[:15]
+
+
+def _extract_keywords_from_text(text: str, max_tags: int = 12) -> list[str]:
+    tokens = re.findall(r"[a-zA-Z0-9']+", str(text or "").lower())
+    stop_words = {
+        "the",
+        "and",
+        "for",
+        "with",
+        "that",
+        "this",
+        "from",
+        "your",
+        "you",
+        "are",
+        "but",
+        "was",
+        "were",
+        "has",
+        "have",
+        "had",
+        "she",
+        "her",
+        "him",
+        "his",
+        "their",
+        "they",
+        "them",
+        "into",
+        "over",
+        "under",
+        "when",
+        "then",
+        "than",
+        "not",
+        "just",
+        "also",
+        "only",
+        "very",
+        "will",
+        "can",
+        "could",
+        "should",
+        "would",
+        "about",
+        "because",
+        "while",
+        "where",
+        "what",
+        "which",
+        "who",
+        "whom",
+        "why",
+        "how",
+        "a",
+        "an",
+        "the",
+        "to",
+        "of",
+        "in",
+        "on",
+        "at",
+        "by",
+        "is",
+        "it",
+        "as",
+        "be",
+        "or",
+        "if",
+        "we",
+        "us",
+        "our",
+        "i",
+        "me",
+        "my",
+        "create",
+        "created",
+        "creating",
+        "story",
+        "journey",
+        "life",
+        "years",
+        "year",
+        "day",
+        "days",
+        "time",
+        "people",
+        "person",
+        "woman",
+        "women",
+        "girl",
+        "man",
+        "men",
+        "child",
+        "children",
+        "mother",
+        "father",
+        "family",
+        "world",
+        "city",
+        "town",
+        "place",
+        "home",
+        "apartment",
+        "code",
+        "didn",
+        "didnt",
+        "faced",
+    }
+    filtered = [t for t in tokens if t not in stop_words and len(t) > 2]
+    counts: dict[str, int] = {}
+    for token in filtered:
+        counts[token] = counts.get(token, 0) + 1
+    ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    unigrams = [word for word, _ in ranked]
+
+    # Build candidate bigrams using adjacent filtered tokens.
+    bigram_counts: dict[str, int] = {}
+    filtered_stream = [t for t in tokens if t not in stop_words and len(t) > 2]
+    for i in range(len(filtered_stream) - 1):
+        bigram = f"{filtered_stream[i]} {filtered_stream[i + 1]}"
+        bigram_counts[bigram] = bigram_counts.get(bigram, 0) + 1
+    ranked_bigrams = sorted(
+        bigram_counts.items(), key=lambda item: (-item[1], item[0])
+    )
+
+    preferred_tokens = {
+        "motivational",
+        "motivation",
+        "inspiration",
+        "inspirational",
+        "success",
+        "speaker",
+        "public",
+        "justice",
+        "leadership",
+        "change",
+        "community",
+        "hope",
+    }
+    phrases: list[str] = []
+    for phrase, _ in ranked_bigrams:
+        words = set(phrase.split())
+        if words & preferred_tokens:
+            phrases.append(phrase)
+        if len(phrases) >= max(3, max_tags // 2):
+            break
+
+    tags: list[str] = []
+    for phrase in phrases:
+        tags.append(phrase)
+    for word in unigrams:
+        if len(tags) >= max_tags:
+            break
+        if word not in {w for tag in tags for w in tag.split()}:
+            tags.append(word)
+    return [tag.replace("_", " ").title() for tag in tags[:max_tags]]
+
+
+def _tag_templates_from_text(text: str) -> list[str]:
+    tokens = set(re.findall(r"[a-zA-Z0-9']+", str(text or "").lower()))
+    tags: list[str] = []
+    if tokens & {"motivation", "motivational", "inspiration", "inspirational"}:
+        tags += ["Motivational Story", "Inspiration"]
+    if tokens & {"success", "achievement", "winner", "winning"}:
+        tags += ["Success Mindset", "Success Story"]
+    if tokens & {"speaker", "speech", "speeches", "voice", "public"}:
+        tags += ["Public Speaker", "Voice Of Change"]
+    if tokens & {"justice", "inequality", "oppression", "rights"}:
+        tags += ["Social Justice", "Human Rights"]
+    if tokens & {"leadership", "leader"}:
+        tags += ["Leadership", "Change Maker"]
+    if tokens & {"struggle", "struggles", "poverty", "hardship"}:
+        tags += ["Overcoming Struggles", "Resilience"]
+    if tokens & {"hope", "courage", "brave"}:
+        tags += ["Hope", "Courage"]
+    if tokens & {"empower", "empowerment"}:
+        tags += ["Empowerment"]
+    if tokens & {"women", "woman", "girl", "female"}:
+        tags += ["Women Empowerment"]
+    # De-duplicate while preserving order.
+    seen: set[str] = set()
+    cleaned: list[str] = []
+    for tag in tags:
+        key = tag.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(tag)
+    return cleaned
+
+
+def _build_local_tags(text: str, fallback_prompt: str) -> list[str]:
+    base = _tag_templates_from_text(text)
+    keyword_tags = _extract_keywords_from_text(
+        " ".join([text or "", fallback_prompt or ""]), max_tags=10
+    )
+    combined = _normalize_tags(base + keyword_tags)
+    return combined[:10]
+
+
+def _enhance_prompt(prompt: str, language: str, tone: str, length: str) -> str:
+    clean_prompt = str(prompt or "").strip()
+    if not clean_prompt:
+        clean_prompt = "Create an inspiring short story."
+    return (
+        "You are creating a narrated YouTube story.\n"
+        f"Language: {language}\n"
+        f"Tone: {tone}\n"
+        f"Target length: {length}\n"
+        "Structure:\n"
+        "1) Hook (1-2 lines)\n"
+        "2) Struggle + preparation\n"
+        "3) Turning point\n"
+        "4) Strong ending with hope\n"
+        "Rules:\n"
+        "- Use a named main character.\n"
+        "- Include one specific detail (place, age, or concrete image).\n"
+        "- Keep it narration-ready and punchy.\n"
+        "User idea:\n"
+        f"{clean_prompt}"
+    )
+
+
+def _gemini_generate_story(prompt: str, language: str, tone: str, length: str) -> dict:
+    if not GEMINI_API_KEY:
+        raise RuntimeError("Missing GEMINI_API_KEY environment variable.")
+    if not GEMINI_ENDPOINT:
+        raise RuntimeError("Missing GEMINI_ENDPOINT configuration.")
+
+    system_prompt = (
+        "You generate YouTube-ready story packages.\n"
+        "Return ONLY valid JSON. No markdown, no explanations.\n"
+        "JSON fields: title (string), story (string), description (string), tags (array of strings).\n"
+        "Story must be narration-ready and in the requested language and tone.\n"
+        "Description should be 2-4 sentences, natural and SEO-friendly.\n"
+        "Tags should be 6-12 short, relevant tags."
+    )
+    enhanced_prompt = _enhance_prompt(prompt, language, tone, length)
+    user_prompt = enhanced_prompt
+    payload = {
+        "contents": [{"role": "user", "parts": [{"text": f"{system_prompt}\n\n{user_prompt}"}]}],
+        "generationConfig": {
+            "temperature": 0.6,
+            "topP": 0.9,
+            "maxOutputTokens": 900,
+            "responseMimeType": "application/json",
+        },
+    }
+
+    req_url = GEMINI_ENDPOINT
+    req = urlrequest.Request(
+        req_url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "X-goog-api-key": GEMINI_API_KEY,
+        },
+        method="POST",
+    )
+    try:
+        with urlrequest.urlopen(req, timeout=45) as resp:
+            raw = resp.read().decode("utf-8")
+    except urlerror.HTTPError as exc:
+        detail = exc.read().decode("utf-8") if exc.fp else str(exc)
+        raise RuntimeError(f"Gemini API error: {detail}") from exc
+    except urlerror.URLError as exc:
+        raise RuntimeError(f"Gemini API connection error: {exc}") from exc
+
+    try:
+        response_payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("Gemini API returned invalid JSON.") from exc
+
+    text = ""
+    candidates = response_payload.get("candidates") or []
+    if candidates:
+        content = candidates[0].get("content") or {}
+        parts = content.get("parts") or []
+        text_parts = []
+        for part in parts:
+            if isinstance(part, dict) and part.get("text"):
+                text_parts.append(str(part.get("text")))
+        text = "\n".join(text_parts).strip()
+        if not text:
+            finish_reason = str(candidates[0].get("finishReason") or "")
+            safety = candidates[0].get("safetyRatings")
+            if finish_reason:
+                raise RuntimeError(
+                    f"Gemini did not return content (finishReason={finish_reason})."
+                )
+            if safety:
+                raise RuntimeError("Gemini did not return content (safety blocked).")
+            raise RuntimeError("Gemini did not return any content.")
+    else:
+        raise RuntimeError(
+            "Gemini response missing candidates: "
+            + json.dumps(response_payload)[:800]
+        )
+
+    cleaned_text = _strip_code_fences(text)
+    data = None
+    try:
+        data = json.loads(cleaned_text)
+    except json.JSONDecodeError:
+        repaired = _repair_json_text(cleaned_text)
+        if repaired and repaired != cleaned_text:
+            try:
+                data = json.loads(repaired)
+            except json.JSONDecodeError:
+                data = None
+        if data is None:
+            json_block = _extract_json_block(cleaned_text)
+            if json_block:
+                try:
+                    data = json.loads(json_block)
+                except json.JSONDecodeError:
+                    data = None
+    if not isinstance(data, dict):
+        try:
+            data = _gemini_fix_json(cleaned_text or text)
+        except Exception:
+            fallback = _best_effort_story_bundle(cleaned_text or text, prompt)
+            if fallback:
+                data = fallback
+            else:
+                preview = cleaned_text[:600] if cleaned_text else ""
+                raise RuntimeError(
+                    "Gemini response did not include JSON content."
+                    + (f" Preview: {preview}" if preview else "")
+                )
+
+    title = str(data.get("title") or "").strip()
+    story = str(data.get("story") or "").strip()
+    description = str(data.get("description") or "").strip()
+    tags = _normalize_tags(data.get("tags"))
+    if len(tags) < 4:
+        tags = _build_local_tags(" ".join([title, story]), prompt)
+
+    if not story:
+        raise RuntimeError("Gemini response missing story.")
+    if not title:
+        title = prompt[:70].strip() if prompt else "Generated Story"
+    if not description:
+        description = story[:320].strip()
+    if not tags:
+        tags = _build_local_tags(" ".join([title, story]), prompt)
+
+    return {
+        "title": title,
+        "story": story,
+        "description": description,
+        "tags": tags,
+    }
 
 
 def _generate_thumbnail_from_video(
@@ -751,6 +1402,23 @@ def _apply_end_credits_to_video(
         "-movflags",
         "+faststart",
         str(output_path),
+    ]
+    _run_ffmpeg(command)
+
+
+def _generate_waveform_thumbnail(
+    audio_path: Path, thumbnail_path: Path, width: int = 640, height: int = 360
+) -> None:
+    command = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(audio_path),
+        "-filter_complex",
+        f"showwavespic=s={width}x{height}:colors=#34d399",
+        "-frames:v",
+        "1",
+        str(thumbnail_path),
     ]
     _run_ffmpeg(command)
 
@@ -4023,6 +4691,156 @@ def _validate_client_secret_payload(payload: dict) -> str | None:
     return None
 
 
+def _infer_category_from_prompt(prompt: str) -> str:
+    available = set(_available_context_categories())
+    if not available:
+        return ""
+    tokens = _tokenize_scene_text(prompt or "")
+    return _infer_scene_category(prompt, tokens, available, "") or ""
+
+
+def _select_library_reference(category_hint: str) -> str:
+    normalized_hint = _normalize_category(category_hint or "")
+    index_entries = _load_video_index()
+    if index_entries:
+        if normalized_hint:
+            for entry in index_entries:
+                if entry.get("category") == normalized_hint:
+                    code = str(entry.get("code") or "").strip()
+                    title = str(entry.get("title") or "").strip()
+                    filename = str(entry.get("filename") or "").strip()
+                    return code or title or Path(filename).stem
+        first = index_entries[0]
+        code = str(first.get("code") or "").strip()
+        title = str(first.get("title") or "").strip()
+        filename = str(first.get("filename") or "").strip()
+        return code or title or Path(filename).stem
+
+    catalog = _load_video_catalog()
+    if catalog:
+        first = catalog[0]
+        code = str(first.get("code") or "").strip()
+        title = str(first.get("title") or "").strip()
+        filename = str(first.get("filename") or "").strip()
+        return code or title or Path(filename).stem
+    return ""
+
+
+def _youtube_upload_from_path(
+    video_path: Path,
+    title: str,
+    description: str,
+    tags: list[str],
+    visibility: str = "public",
+    publish_at: str = "",
+) -> dict:
+    creds = _load_credentials()
+    if not creds:
+        raise RuntimeError("YouTube not authorized.")
+
+    service = build("youtube", "v3", credentials=creds)
+    safe_visibility = (
+        visibility if visibility in ("public", "private", "unlisted") else "private"
+    )
+    rfc3339_publish_at = _parse_publish_at(publish_at)
+    if rfc3339_publish_at and safe_visibility != "private":
+        status_dict: dict[str, str] = {
+            "privacyStatus": "private",
+            "publishAt": rfc3339_publish_at,
+        }
+    else:
+        status_dict = {"privacyStatus": safe_visibility}
+
+    request_body = {
+        "snippet": {
+            "title": title,
+            "description": description,
+            "tags": tags,
+            "categoryId": "22",
+        },
+        "status": status_dict,
+    }
+    media = MediaFileUpload(str(video_path), resumable=True)
+    upload_request = service.videos().insert(
+        part=",".join(request_body.keys()),
+        body=request_body,
+        media_body=media,
+    )
+    try:
+        response = upload_request.execute()
+    except HttpError as exc:
+        raise RuntimeError(f"YouTube rejected the upload: {exc}") from exc
+    except Exception as exc:
+        raise RuntimeError(f"Failed to upload video to YouTube: {exc}") from exc
+
+    thumbnail_source = "none"
+    thumbnail_error = None
+    auto_thumbnail_path = OUTPUT_DIR / f"{video_path.stem}_thumb_auto.jpg"
+    try:
+        _generate_thumbnail_from_video(video_path, auto_thumbnail_path)
+        service.thumbnails().set(
+            videoId=response["id"],
+            media_body=MediaFileUpload(str(auto_thumbnail_path)),
+        ).execute()
+        thumbnail_source = "auto"
+    except Exception as exc:
+        thumbnail_error = str(exc)
+
+    payload = {
+        "video_id": response.get("id"),
+        "video_url": f"https://www.youtube.com/watch?v={response.get('id')}",
+        "thumbnail_source": thumbnail_source,
+        "thumbnail_error": thumbnail_error,
+    }
+    if rfc3339_publish_at and safe_visibility != "private":
+        payload["scheduled_publish_at"] = rfc3339_publish_at
+    return payload
+
+
+def _generate_video_from_story(
+    story: str,
+    title: str,
+    description: str,
+    tags: list[str],
+    category_hint: str,
+) -> dict:
+    library_ref = _select_library_reference(category_hint)
+    if not library_ref:
+        raise RuntimeError("No library videos available to generate a video.")
+
+    row = {
+        "_library_ref": library_ref,
+        "_script_text": story,
+        "video_name": title,
+        "video_description": description,
+        "video_tags": ", ".join(tags),
+        "video_strategy": "context_switch",
+        "category_hint": category_hint,
+        "context_lock_category": "true",
+        "output_mode": "youtube",
+        "voice_style": "narrator",
+    }
+    if not _load_video_index():
+        row["video_strategy"] = "single"
+
+    generated = _process_one_batch_row(row)
+    output_url = str(generated.get("output_url") or "")
+    if not output_url:
+        raise RuntimeError("Video generation did not return an output URL.")
+    if output_url.startswith("/api/download/"):
+        filename = output_url.split("/api/download/")[-1]
+    else:
+        filename = Path(output_url).name
+    video_path = OUTPUT_DIR / filename
+    if not video_path.exists():
+        raise RuntimeError("Generated video file not found.")
+    return {
+        "output_url": output_url,
+        "video_path": video_path,
+        "details": generated,
+    }
+
+
 @app.post("/api/youtube/client-secret")
 def upload_client_secret(client_secret: UploadFile = File(...)) -> JSONResponse:
     if not client_secret.filename or not str(client_secret.filename).lower().endswith(".json"):
@@ -4067,6 +4885,12 @@ def youtube_auth_url() -> JSONResponse:
         json.dumps({"state": state}), encoding="utf-8"
     )
     return JSONResponse({"auth_url": auth_url})
+
+
+@app.get("/api/youtube/status")
+def youtube_status() -> JSONResponse:
+    creds = _load_credentials()
+    return JSONResponse({"authorized": bool(creds)})
 
 
 @app.get("/oauth2callback")

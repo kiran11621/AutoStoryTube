@@ -170,6 +170,21 @@ You can keep reusable background videos in `data/video_library` and list them
 in `data/video_library/catalog.json`. The UI will show the list and let you
 select a video by code instead of uploading every time.
 
+#### Create Video: UI media libraries
+
+The Create Video screen includes **scrollable Video and Audio libraries** so you can pick assets without typing codes.
+
+- Video list reads from `data/video_library/catalog.json`
+- Audio list reads from `data/audio_library/catalog.json`
+- Thumbnails are auto-generated on first view and cached in `data/thumbnails`
+  - Video thumbnails are captured from the clip
+  - Audio thumbnails are waveform images
+- Selecting a library item auto-fills:
+  - `library_code` (video)
+  - `audio_library_ref` (audio)
+
+If you add or rename files, update the corresponding `catalog.json` entries. The UI uses `code`, `title`, and `filename` fields for search and selection.
+
 `context_switch` (context-based video changing) also uses clips from this same
 local `data/video_library` folder. To make it work on another machine, copy the
 `data/video_library` files and keep `catalog.json` in sync with actual files.
