@@ -18,6 +18,7 @@ data/uploads/
 data/outputs/
 data/credentials/
 !data/credentials/.gitkeep
+data/credentials/gemini_key.txt
 data/music/
 !data/music/.gitkeep
 data/logos/

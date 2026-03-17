@@ -11,6 +11,29 @@ The YouTube upload flow supports all three post-processing features:
 
 It runs completely offline **except for the YouTube upload step**.
 
+## Prompt Studio (Story Generation)
+
+Prompt Studio uses Gemini to generate the story, description, and tags. To avoid restarts, the app reads the API key **from a local file on every request**.
+
+### Add your Gemini API key (no restart required)
+
+Create this file and paste your key on a single line:
+
+```
+data/credentials/gemini_key.txt
+```
+
+**Example file contents (do not include quotes or extra lines):**
+
+```
+YOUR_GEMINI_API_KEY_HERE
+```
+
+Notes:
+
+- The key file is **local-only** and ignored by git.
+- If the file is missing, the app falls back to `GEMINI_API_KEY` from the environment.
+
 ## Prerequisites
 
 Install these before running the app:

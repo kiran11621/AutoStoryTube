@@ -1,9 +1,10 @@
 import { motion } from "framer-motion";
 import { useState } from "react";
-import { Play, FileSpreadsheet } from "lucide-react";
+import { Play, FileSpreadsheet, Sparkles, Clapperboard, Upload } from "lucide-react";
 import CreateVideo from "../components/CreateVideo";
 import YoutubeUpload from "../components/YoutubeUpload";
 import BulkUpload from "../components/BulkUpload";
+import PromptStudio from "../components/PromptStudio";
 
 export default function Dashboard() {
 	const [tab, setTab] = useState("create");
@@ -59,13 +60,26 @@ export default function Dashboard() {
 					<div className="flex mb-8 bg-slate-900 rounded-xl p-1 border border-slate-800 gap-1">
 						<button
 							onClick={() => setTab("create")}
-							className={`flex-1 py-3 rounded-lg text-sm font-medium transition-all ${
+							className={`flex-1 py-3 rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 ${
 								tab === "create"
 									? "bg-gradient-to-r from-purple-600 to-blue-600 text-white"
 									: "text-slate-400 hover:text-white"
 							}`}
 						>
+							<Clapperboard className="w-4 h-4" />
 							Create Video
+						</button>
+
+						<button
+							onClick={() => setTab("prompt")}
+							className={`flex-1 py-3 rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 ${
+								tab === "prompt"
+									? "bg-gradient-to-r from-purple-600 to-blue-600 text-white"
+									: "text-slate-400 hover:text-white"
+							}`}
+						>
+							<Sparkles className="w-4 h-4" />
+							Prompt Studio
 						</button>
 
 						<button
@@ -82,12 +96,13 @@ export default function Dashboard() {
 
 						<button
 							onClick={() => setTab("youtube")}
-							className={`flex-1 py-3 rounded-lg text-sm font-medium transition-all ${
+							className={`flex-1 py-3 rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 ${
 								tab === "youtube"
 									? "bg-gradient-to-r from-purple-600 to-blue-600 text-white"
 									: "text-slate-400 hover:text-white"
 							}`}
 						>
+							<Upload className="w-4 h-4" />
 							Upload to YouTube
 						</button>
 					</div>
@@ -100,7 +115,15 @@ export default function Dashboard() {
 						transition={{ duration: 0.3 }}
 						className="bg-slate-900 rounded-2xl p-8 border border-slate-800 shadow-2xl"
 					>
-						{tab === "create" ? <CreateVideo /> : tab === "bulk" ? <BulkUpload /> : <YoutubeUpload />}
+						{tab === "prompt" ? (
+							<PromptStudio />
+						) : tab === "create" ? (
+							<CreateVideo />
+						) : tab === "bulk" ? (
+							<BulkUpload />
+						) : (
+							<YoutubeUpload />
+						)}
 					</motion.div>
 				</div>
 			</motion.div>
