@@ -161,6 +161,8 @@ export default function CreateVideo() {
 	const [videoCategory, setVideoCategory] = useState("all");
 	const [showVideoFilters, setShowVideoFilters] = useState(false);
 	const [showAudioFilters, setShowAudioFilters] = useState(false);
+	const [contextLibraryRefs, setContextLibraryRefs] = useState([]);
+	const [showContextPicker, setShowContextPicker] = useState(false);
 	const [bgmFile, setBgmFile] = useState(null);
 	const [bgmVolume, setBgmVolume] = useState(18);
 	const [bgmDucking, setBgmDucking] = useState(true);
@@ -218,6 +220,13 @@ export default function CreateVideo() {
 			isMounted = false;
 		};
 	}, []);
+
+	useEffect(() => {
+		if (videoStrategy !== "context_switch") {
+			setContextLibraryRefs([]);
+			setShowContextPicker(false);
+		}
+	}, [videoStrategy]);
 
 	useEffect(() => {
 		let isMounted = true;
@@ -381,6 +390,12 @@ export default function CreateVideo() {
 			formData.append("category_hint", categoryHint.trim());
 			formData.append("context_scene_count", String(contextSceneCount));
 			formData.append("context_lock_category", "true");
+			if (contextLibraryRefs.length) {
+				formData.append(
+					"context_library_refs",
+					JSON.stringify(contextLibraryRefs),
+				);
+			}
 			formData.append("bgm_volume", (bgmVolume / 100).toFixed(2));
 			formData.append("bgm_ducking", bgmDucking ? "true" : "false");
 			formData.append("audio_library_ref", audioLibraryRef.trim());
@@ -478,6 +493,28 @@ export default function CreateVideo() {
 			.toLowerCase();
 		return haystack.includes(normalizedAudioFilter);
 	});
+	const selectedContextItems = contextLibraryRefs
+		.map((ref) =>
+			videoLibrary.find((item) => {
+				const candidate = item?.code || item?.title || item?.filename || "";
+				return candidate && candidate.toLowerCase() === ref.toLowerCase();
+			}),
+		)
+		.filter(Boolean);
+	const toggleContextRef = (ref) => {
+		if (!ref) return;
+		setContextLibraryRefs((prev) => {
+			const exists = prev.some(
+				(item) => String(item).toLowerCase() === String(ref).toLowerCase(),
+			);
+			if (exists) {
+				return prev.filter(
+					(item) => String(item).toLowerCase() !== String(ref).toLowerCase(),
+				);
+			}
+			return [...prev, ref];
+		});
+	};
 
 	return (
 		<div className="w-full bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 rounded-2xl p-5 md:p-6">
@@ -679,8 +716,15 @@ export default function CreateVideo() {
 													type="button"
 													onClick={() => {
 														if (!code) return;
-														setLibraryCode(code);
-														setVideoFile(null);
+														if (
+															code.trim().toLowerCase() ===
+															libraryCode.trim().toLowerCase()
+														) {
+															setLibraryCode("");
+														} else {
+															setLibraryCode(code);
+															setVideoFile(null);
+														}
 													}}
 													className={`group relative rounded-2xl border text-left transition ${
 														isSelected
@@ -1210,6 +1254,113 @@ export default function CreateVideo() {
 										className="w-full rounded-lg border border-slate-700 bg-slate-900/80 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-purple-500/50"
 									/>
 								</div>
+							</div>
+						) : null}
+
+						{videoStrategy === "context_switch" ? (
+							<div className="rounded-2xl border border-slate-700 bg-slate-950/40 p-4 space-y-3">
+								<div className="flex flex-wrap items-center justify-between gap-2">
+									<div>
+										<p className="text-slate-200 font-semibold">
+											Context Switch Clips (optional)
+										</p>
+										<p className="text-xs text-slate-500">
+											Choose specific library clips to use during scene switches.
+										</p>
+									</div>
+									<div className="flex items-center gap-2">
+										<button
+											type="button"
+											onClick={() => setShowContextPicker((prev) => !prev)}
+											className="rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:border-purple-400/70"
+										>
+											{showContextPicker ? "Hide Picker" : "Choose Clips"}
+										</button>
+										<button
+											type="button"
+											onClick={() => setContextLibraryRefs([])}
+											disabled={!contextLibraryRefs.length}
+											className="rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:border-purple-400/70 disabled:cursor-not-allowed disabled:opacity-50"
+										>
+											Clear
+										</button>
+									</div>
+								</div>
+
+								{contextLibraryRefs.length ? (
+									<div className="flex flex-wrap gap-2">
+										{selectedContextItems.map((item) => {
+											const ref =
+												item?.code || item?.title || item?.filename || "";
+											return (
+												<span
+													key={ref}
+													className="rounded-full border border-purple-400/40 bg-purple-500/15 px-3 py-1 text-[11px] text-purple-100"
+												>
+													{item?.title || ref}
+												</span>
+											);
+										})}
+									</div>
+								) : (
+									<p className="text-xs text-slate-500">
+										No clips selected. We will auto-pick from the library.
+									</p>
+								)}
+
+								{showContextPicker ? (
+									<div className="max-h-64 overflow-y-auto pr-1">
+										<div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+											{filteredVideoLibrary.map((item) => {
+												const ref =
+													item?.code || item?.title || item?.filename || "";
+												const isChecked = contextLibraryRefs.some(
+													(value) =>
+														String(value).toLowerCase() ===
+														String(ref).toLowerCase(),
+												);
+												const thumbRef = encodeURIComponent(ref);
+												return (
+													<button
+														key={`${ref}-context`}
+														type="button"
+														onClick={() => toggleContextRef(ref)}
+														className={`relative rounded-2xl border text-left transition ${
+															isChecked
+																? "border-purple-400/90 bg-purple-500/10"
+																: "border-slate-800 bg-slate-950/40 hover:border-purple-500/60"
+														}`}
+													>
+														<div className="relative h-24 overflow-hidden rounded-t-2xl bg-slate-900">
+															<img
+																src={`/api/library/thumbnail?code=${thumbRef}`}
+																alt={item?.title || item?.code || "Video"}
+																className="absolute inset-0 h-full w-full object-cover"
+																onError={(e) => {
+																	e.currentTarget.style.opacity = "0";
+																}}
+															/>
+															<div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-slate-950/10 to-transparent" />
+															{isChecked ? (
+																<span className="absolute top-2 right-2 rounded-full bg-purple-500/80 px-2 py-0.5 text-[10px] font-semibold text-white">
+																	Selected
+																</span>
+															) : null}
+														</div>
+														<div className="px-3 py-2">
+															<p className="text-xs font-semibold text-slate-100 truncate">
+																{item?.title || item?.code || "Untitled"}
+															</p>
+															<p className="text-[11px] text-slate-500 truncate">
+																{item?.code || item?.filename || "No code"}
+															</p>
+														</div>
+													</button>
+												);
+											})}
+										</div>
+									</div>
+								) : null}
 							</div>
 						) : null}
 					</motion.div>

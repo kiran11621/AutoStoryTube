@@ -2064,6 +2064,14 @@ def _select_context_clip_paths(
     if not scenes:
         return [fallback_video_path], ["fallback"]
 
+    selected_refs_raw = row.get("context_library_refs") or []
+    if isinstance(selected_refs_raw, str):
+        selected_refs = [ref.strip() for ref in selected_refs_raw.split(",") if ref.strip()]
+    elif isinstance(selected_refs_raw, (list, tuple, set)):
+        selected_refs = [str(ref).strip() for ref in selected_refs_raw if str(ref).strip()]
+    else:
+        selected_refs = []
+
     category_hint = _normalize_category(
         row.get("category_hint") or row.get("content_category") or row.get("video_category")
     )
@@ -2072,29 +2080,64 @@ def _select_context_clip_paths(
         default=bool(category_hint),
     )
     index_entries = _load_video_index()
-    if not index_entries:
+    if not index_entries and not selected_refs:
         return [fallback_video_path for _ in scenes], ["fallback" for _ in scenes]
 
     candidates = []
     category_buckets: dict[str, list[dict]] = {}
-    for entry in index_entries:
-        tags = set(_tokenize_scene_text(" ".join(entry.get("tags", []))))
-        title_tokens = _tokenize_scene_text(str(entry.get("title") or ""))
-        category = str(entry.get("category") or "")
-        filename_tokens = _tokenize_scene_text(str(entry.get("filename") or ""))
-        category_tokens = _tokenize_scene_text(category.replace("_", " "))
-        code = str(entry.get("code") or "")
-        candidate = {
-            "path": entry["path"],
-            "category": category,
-            "tokens": tags.union(title_tokens).union(category_tokens).union(filename_tokens),
-            "code": code,
+    if selected_refs:
+        index_by_path = {
+            str(entry.get("path")): entry for entry in index_entries if entry.get("path")
         }
-        candidates.append(
-            candidate
-        )
-        if category:
-            category_buckets.setdefault(category, []).append(candidate)
+        for ref in selected_refs:
+            match = _library_video_by_reference(ref)
+            if not match:
+                continue
+            path, entry = match
+            index_entry = index_by_path.get(str(path))
+            category = ""
+            tags = set()
+            title_tokens = _tokenize_scene_text(str(entry.get("title") or ""))
+            filename_tokens = _tokenize_scene_text(str(entry.get("filename") or ""))
+            if index_entry:
+                category = str(index_entry.get("category") or "")
+                tags = set(_tokenize_scene_text(" ".join(index_entry.get("tags", []))))
+            if not category:
+                filename = str(entry.get("filename") or "")
+                if "/" in filename:
+                    category = filename.split("/")[0].strip()
+            category_tokens = _tokenize_scene_text(category.replace("_", " "))
+            code = str(entry.get("code") or ref or "")
+            candidate = {
+                "path": path,
+                "category": category,
+                "tokens": tags.union(title_tokens).union(category_tokens).union(filename_tokens),
+                "code": code,
+            }
+            candidates.append(candidate)
+            if category:
+                category_buckets.setdefault(category, []).append(candidate)
+        if not candidates:
+            raise RuntimeError("Selected context clips not found.")
+    else:
+        for entry in index_entries:
+            tags = set(_tokenize_scene_text(" ".join(entry.get("tags", []))))
+            title_tokens = _tokenize_scene_text(str(entry.get("title") or ""))
+            category = str(entry.get("category") or "")
+            filename_tokens = _tokenize_scene_text(str(entry.get("filename") or ""))
+            category_tokens = _tokenize_scene_text(category.replace("_", " "))
+            code = str(entry.get("code") or "")
+            candidate = {
+                "path": entry["path"],
+                "category": category,
+                "tokens": tags.union(title_tokens).union(category_tokens).union(filename_tokens),
+                "code": code,
+            }
+            candidates.append(
+                candidate
+            )
+            if category:
+                category_buckets.setdefault(category, []).append(candidate)
     if not candidates:
         return [fallback_video_path for _ in scenes], ["fallback" for _ in scenes]
     for category in category_buckets:
@@ -2272,31 +2315,35 @@ def _build_context_background_video(
     )
     if len(scene_clip_paths) > 1 and len({str(path) for path in scene_clip_paths}) == 1:
         # Final guard: force unique clip paths before segment rendering.
-        hint = _normalize_category(
-            row.get("category_hint") or row.get("content_category") or row.get("video_category")
-        )
-        index_entries = _load_video_index()
-        pool = []
-        for entry in index_entries:
-            p = entry.get("path")
-            if not isinstance(p, Path) or not p.exists():
-                continue
-            category = str(entry.get("category") or "")
-            if hint and category != hint:
-                continue
-            pool.append(p)
-        if len(pool) < 2:
-            pool = [entry.get("path") for entry in index_entries if isinstance(entry.get("path"), Path) and entry.get("path").exists()]
-        unique_pool = []
-        seen = set()
-        for p in pool:
-            key = str(p)
-            if key in seen:
-                continue
-            seen.add(key)
-            unique_pool.append(p)
-        if len(unique_pool) > 1:
-            scene_clip_paths = [unique_pool[idx % len(unique_pool)] for idx in range(len(scene_clip_paths))]
+        selected_refs = row.get("context_library_refs") or []
+        if isinstance(selected_refs, str):
+            selected_refs = [ref.strip() for ref in selected_refs.split(",") if ref.strip()]
+        if not selected_refs:
+            hint = _normalize_category(
+                row.get("category_hint") or row.get("content_category") or row.get("video_category")
+            )
+            index_entries = _load_video_index()
+            pool = []
+            for entry in index_entries:
+                p = entry.get("path")
+                if not isinstance(p, Path) or not p.exists():
+                    continue
+                category = str(entry.get("category") or "")
+                if hint and category != hint:
+                    continue
+                pool.append(p)
+            if len(pool) < 2:
+                pool = [entry.get("path") for entry in index_entries if isinstance(entry.get("path"), Path) and entry.get("path").exists()]
+            unique_pool = []
+            seen = set()
+            for p in pool:
+                key = str(p)
+                if key in seen:
+                    continue
+                seen.add(key)
+                unique_pool.append(p)
+            if len(unique_pool) > 1:
+                scene_clip_paths = [unique_pool[idx % len(unique_pool)] for idx in range(len(scene_clip_paths))]
 
     segment_paths = []
     for idx, (clip_path, segment_duration) in enumerate(
@@ -3657,6 +3704,7 @@ def process_video(
     category_hint: str = Form(""),
     context_scene_count: int = Form(6),
     context_lock_category: str = Form("true"),
+    context_library_refs: str = Form(""),
     bgm_volume: str | None = Form(None),
     bgm_ducking: str | None = Form(None),
     voice_style: str = Form("professional"),
@@ -3696,6 +3744,21 @@ def process_video(
     voice_gender = (voice_gender or "male").strip().lower()
     if voice_gender not in {"male", "female"}:
         voice_gender = "male"
+
+    parsed_context_refs: list[str] = []
+    if context_library_refs:
+        try:
+            raw_refs = json.loads(context_library_refs)
+        except Exception:
+            raw_refs = context_library_refs
+        if isinstance(raw_refs, (list, tuple, set)):
+            parsed_context_refs = [
+                str(ref).strip() for ref in raw_refs if str(ref).strip()
+            ]
+        elif isinstance(raw_refs, str):
+            parsed_context_refs = [
+                ref.strip() for ref in raw_refs.split(",") if ref.strip()
+            ]
 
     job_id = uuid.uuid4().hex
     video_path: Path | None = None
@@ -3778,6 +3841,7 @@ def process_video(
                     "category_hint": category_hint,
                     "context_scene_count": context_scene_count,
                     "context_lock_category": context_lock_category,
+                    "context_library_refs": parsed_context_refs,
                 },
                 fallback_video_path=source_video_path,
             )
