@@ -547,6 +547,127 @@ def audio_library_catalog() -> JSONResponse:
     return JSONResponse({"audio": _load_audio_catalog()})
 
 
+@app.post("/api/library/video/upload")
+def upload_video_library_item(
+    file: UploadFile = File(...),
+    code: str = Form(""),
+    title: str = Form(""),
+    description: str = Form(""),
+    category: str = Form(""),
+    tags: str = Form(""),
+    video_type: str = Form(""),
+    mood: str = Form(""),
+    source: str = Form(""),
+) -> JSONResponse:
+    if not file.filename:
+        return JSONResponse({"error": "Missing video file."}, status_code=400)
+    ext = Path(file.filename).suffix.lower()
+    if ext not in {".mp4", ".mov", ".mkv", ".webm"}:
+        return JSONResponse({"error": "Unsupported video format."}, status_code=400)
+
+    safe_name = _safe_filename(file.filename)
+    normalized_category = _normalize_category(category)
+    target_dir = VIDEO_LIBRARY_DIR / normalized_category if normalized_category else VIDEO_LIBRARY_DIR
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_path = target_dir / safe_name
+    with target_path.open("wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    catalog = _load_json_list(VIDEO_LIBRARY_CATALOG)
+    existing_codes = {str(entry.get("code") or "").strip().lower() for entry in catalog}
+    base_code = code.strip() if code.strip() else Path(safe_name).stem
+    final_code = _unique_library_code(existing_codes, base_code)
+
+    final_title = title.strip() if title.strip() else final_code.replace("_", " ").title()
+    filename_rel = target_path.relative_to(VIDEO_LIBRARY_DIR).as_posix()
+    tag_list = [t.strip().lower() for t in tags.split(",") if t.strip()]
+    metadata = _probe_video_metadata(target_path)
+
+    entry = {
+        "code": final_code,
+        "title": final_title,
+        "filename": filename_rel,
+        "category": normalized_category,
+        "tags": tag_list,
+        "orientation": metadata.get("orientation") or "",
+        "source": source.strip(),
+        "type": video_type.strip(),
+        "mood": mood.strip(),
+        "description": description.strip(),
+        "duration_sec": metadata.get("duration_sec"),
+        "resolution": metadata.get("resolution") or "",
+        "fps": metadata.get("fps") or "",
+    }
+    catalog.append(entry)
+    _save_json_list(VIDEO_LIBRARY_CATALOG, catalog)
+
+    index_entries = _load_json_list(VIDEO_LIBRARY_INDEX)
+    index_entries.append(
+        {
+            "code": final_code,
+            "title": final_title,
+            "filename": filename_rel,
+            "category": normalized_category,
+            "tags": tag_list,
+            "orientation": metadata.get("orientation") or "",
+            "source": source.strip(),
+        }
+    )
+    _save_json_list(VIDEO_LIBRARY_INDEX, index_entries)
+
+    thumb_name = _safe_filename(f"video_{Path(filename_rel).stem}.jpg")
+    thumb_path = THUMBNAILS_DIR / thumb_name
+    if not thumb_path.exists():
+        _generate_thumbnail_from_video(target_path, thumb_path)
+
+    return JSONResponse({"status": "ok", "entry": entry})
+
+
+@app.post("/api/library/audio/upload")
+def upload_audio_library_item(
+    file: UploadFile = File(...),
+    code: str = Form(""),
+    title: str = Form(""),
+    description: str = Form(""),
+    source: str = Form(""),
+) -> JSONResponse:
+    if not file.filename:
+        return JSONResponse({"error": "Missing audio file."}, status_code=400)
+    ext = Path(file.filename).suffix.lower()
+    if ext not in {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg"}:
+        return JSONResponse({"error": "Unsupported audio format."}, status_code=400)
+
+    safe_name = _safe_filename(file.filename)
+    target_path = AUDIO_LIBRARY_DIR / safe_name
+    with target_path.open("wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    catalog = _load_json_list(AUDIO_LIBRARY_CATALOG)
+    existing_codes = {str(entry.get("code") or "").strip().lower() for entry in catalog}
+    base_code = code.strip() if code.strip() else Path(safe_name).stem
+    final_code = _unique_library_code(existing_codes, base_code)
+    final_title = title.strip() if title.strip() else final_code.replace("_", " ").title()
+    duration = _probe_audio_duration(target_path)
+
+    entry = {
+        "code": final_code,
+        "title": final_title,
+        "filename": safe_name,
+        "description": description.strip(),
+        "source": source.strip(),
+        "duration_sec": duration,
+    }
+    catalog.append(entry)
+    _save_json_list(AUDIO_LIBRARY_CATALOG, catalog)
+
+    thumb_name = _safe_filename(f"audio_{Path(safe_name).stem}.png")
+    thumb_path = THUMBNAILS_DIR / thumb_name
+    if not thumb_path.exists():
+        _generate_waveform_thumbnail(target_path, thumb_path)
+
+    return JSONResponse({"status": "ok", "entry": entry})
+
+
 @app.get("/api/library/thumbnail")
 def library_thumbnail(code: str = "") -> FileResponse:
     match = _library_video_by_reference(code)
@@ -679,8 +800,111 @@ def _run_ffmpeg(command: list[str]) -> None:
         raise RuntimeError(f"FFmpeg failed: {process.stderr}")
 
 
+def _run_ffprobe(command: list[str]) -> str:
+    process = subprocess.run(command, capture_output=True, text=True)
+    if process.returncode != 0:
+        raise RuntimeError(f"ffprobe failed: {process.stderr}")
+    return (process.stdout or "").strip()
+
+
 def _safe_filename(name: str) -> str:
     return re.sub(r"[^a-zA-Z0-9._-]", "_", name)
+
+
+def _load_json_list(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8-sig"))
+    except json.JSONDecodeError:
+        return []
+    return [entry for entry in loaded if isinstance(entry, dict)]
+
+
+def _save_json_list(path: Path, entries: list[dict]) -> None:
+    tmp_path = path.with_suffix(".tmp")
+    tmp_path.write_text(json.dumps(entries, indent=2), encoding="utf-8")
+    tmp_path.replace(path)
+
+
+def _unique_library_code(existing: set[str], base_code: str) -> str:
+    normalized = re.sub(r"[^a-z0-9_]+", "_", base_code.strip().lower()).strip("_")
+    if not normalized:
+        normalized = "clip"
+    candidate = normalized
+    counter = 1
+    while candidate in existing:
+        counter += 1
+        candidate = f"{normalized}_{counter:03d}"
+    return candidate
+
+
+def _probe_video_metadata(path: Path) -> dict:
+    metadata = {"duration_sec": None, "resolution": "", "fps": "", "orientation": ""}
+    try:
+        duration_raw = _run_ffprobe(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(path),
+            ]
+        )
+        if duration_raw:
+            metadata["duration_sec"] = round(float(duration_raw), 2)
+    except Exception:
+        pass
+    try:
+        stream_raw = _run_ffprobe(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=width,height,avg_frame_rate",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(path),
+            ]
+        )
+        parts = [p for p in stream_raw.splitlines() if p.strip()]
+        if len(parts) >= 2:
+            width = int(float(parts[0]))
+            height = int(float(parts[1]))
+            metadata["resolution"] = f"{width}x{height}"
+            metadata["orientation"] = "portrait" if height > width else "landscape"
+        if len(parts) >= 3 and "/" in parts[2]:
+            num, den = parts[2].split("/", 1)
+            if float(den) != 0:
+                metadata["fps"] = f"{float(num) / float(den):.2f}"
+    except Exception:
+        pass
+    return metadata
+
+
+def _probe_audio_duration(path: Path) -> float | None:
+    try:
+        duration_raw = _run_ffprobe(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(path),
+            ]
+        )
+        return round(float(duration_raw), 2) if duration_raw else None
+    except Exception:
+        return None
 
 
 def _extract_json_block(text: str) -> str | None:
@@ -1630,14 +1854,25 @@ def _parse_publish_at(publish_at: str) -> str | None:
         return None
 
 
-def _load_video_catalog() -> list[dict[str, str]]:
+def _load_video_catalog() -> list[dict]:
     if not VIDEO_LIBRARY_CATALOG.exists():
         return []
     try:
         entries = json.loads(VIDEO_LIBRARY_CATALOG.read_text(encoding="utf-8-sig"))
     except json.JSONDecodeError:
         return []
-    return [entry for entry in entries if isinstance(entry, dict)]
+    normalized = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        filename = str(entry.get("filename") or "").strip()
+        if not filename:
+            continue
+        candidate = VIDEO_LIBRARY_DIR / filename
+        if not candidate.exists():
+            continue
+        normalized.append(entry)
+    return normalized
 
 
 def _load_audio_catalog() -> list[dict[str, str]]:
@@ -1660,6 +1895,9 @@ def _load_audio_catalog() -> list[dict[str, str]]:
                             "code": str(entry.get("code") or "").strip(),
                             "title": str(entry.get("title") or "").strip(),
                             "filename": filename,
+                            "description": str(entry.get("description") or "").strip(),
+                            "source": str(entry.get("source") or "").strip(),
+                            "duration_sec": entry.get("duration_sec"),
                         }
                     )
         except json.JSONDecodeError:

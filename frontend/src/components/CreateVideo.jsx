@@ -163,6 +163,30 @@ export default function CreateVideo() {
 	const [showAudioFilters, setShowAudioFilters] = useState(false);
 	const [contextLibraryRefs, setContextLibraryRefs] = useState([]);
 	const [showContextPicker, setShowContextPicker] = useState(false);
+	const [uploadingVideo, setUploadingVideo] = useState(false);
+	const [uploadingAudio, setUploadingAudio] = useState(false);
+	const [uploadMessage, setUploadMessage] = useState("");
+	const [uploadError, setUploadError] = useState("");
+	const [videoUploadErrors, setVideoUploadErrors] = useState({});
+	const [audioUploadErrors, setAudioUploadErrors] = useState({});
+	const [videoUploadProgress, setVideoUploadProgress] = useState(0);
+	const [audioUploadProgress, setAudioUploadProgress] = useState(0);
+	const [showUploadSection, setShowUploadSection] = useState(false);
+	const [videoUploadFile, setVideoUploadFile] = useState(null);
+	const [videoUploadTitle, setVideoUploadTitle] = useState("");
+	const [videoUploadCode, setVideoUploadCode] = useState("");
+	const [videoUploadCategory, setVideoUploadCategory] = useState("");
+	const [videoUploadType, setVideoUploadType] = useState("");
+	const [videoUploadMood, setVideoUploadMood] = useState("");
+	const [videoUploadDescription, setVideoUploadDescription] = useState("");
+	const [videoUploadTags, setVideoUploadTags] = useState("");
+	const [audioUploadFile, setAudioUploadFile] = useState(null);
+	const [audioUploadTitle, setAudioUploadTitle] = useState("");
+	const [audioUploadCode, setAudioUploadCode] = useState("");
+	const [audioUploadDescription, setAudioUploadDescription] = useState("");
+	const [showUploadAdvanced, setShowUploadAdvanced] = useState(false);
+	const [videoUploadPreviewUrl, setVideoUploadPreviewUrl] = useState("");
+	const [audioUploadPreviewUrl, setAudioUploadPreviewUrl] = useState("");
 	const [bgmFile, setBgmFile] = useState(null);
 	const [bgmVolume, setBgmVolume] = useState(18);
 	const [bgmDucking, setBgmDucking] = useState(true);
@@ -229,6 +253,26 @@ export default function CreateVideo() {
 	}, [videoStrategy]);
 
 	useEffect(() => {
+		if (!videoUploadFile) {
+			setVideoUploadPreviewUrl("");
+			return;
+		}
+		const url = URL.createObjectURL(videoUploadFile);
+		setVideoUploadPreviewUrl(url);
+		return () => URL.revokeObjectURL(url);
+	}, [videoUploadFile]);
+
+	useEffect(() => {
+		if (!audioUploadFile) {
+			setAudioUploadPreviewUrl("");
+			return;
+		}
+		const url = URL.createObjectURL(audioUploadFile);
+		setAudioUploadPreviewUrl(url);
+		return () => URL.revokeObjectURL(url);
+	}, [audioUploadFile]);
+
+	useEffect(() => {
 		let isMounted = true;
 		const loadLibraries = async () => {
 			setLibraryLoading(true);
@@ -257,6 +301,22 @@ export default function CreateVideo() {
 		};
 	}, []);
 
+	const refreshLibraries = async () => {
+		setLibraryLoading(true);
+		try {
+			const [videoRes, audioRes] = await Promise.all([
+				fetch("/api/library"),
+				fetch("/api/audio-library"),
+			]);
+			const videoData = await videoRes.json();
+			const audioData = await audioRes.json();
+			setVideoLibrary(Array.isArray(videoData?.videos) ? videoData.videos : []);
+			setAudioLibrary(Array.isArray(audioData?.audio) ? audioData.audio : []);
+		} finally {
+			setLibraryLoading(false);
+		}
+	};
+
 	const applySubtitlePreset = (presetKey) => {
 		const preset = subtitlePresets[presetKey] || subtitlePresets.classic;
 		const positionMap = {
@@ -270,6 +330,146 @@ export default function CreateVideo() {
 		setSubtitleBold(Boolean(preset.bold));
 		setSubtitleItalic(Boolean(preset.italic));
 		setSubtitlePosition(positionMap[preset.alignment] || "bottom");
+	};
+
+	const formatDuration = (value) => {
+		const seconds = Number(value);
+		if (!Number.isFinite(seconds) || seconds <= 0) return "";
+		const mins = Math.floor(seconds / 60);
+		const secs = Math.round(seconds % 60);
+		if (!mins) return `${secs}s`;
+		return `${mins}m ${String(secs).padStart(2, "0")}s`;
+	};
+
+	const MAX_VIDEO_UPLOAD_BYTES = 500 * 1024 * 1024;
+	const MAX_AUDIO_UPLOAD_BYTES = 50 * 1024 * 1024;
+
+	const handleVideoLibraryUpload = async () => {
+		const errors = {};
+		if (!videoUploadFile) {
+			errors.file = "Please choose a video file.";
+		}
+		if (videoUploadFile && videoUploadFile.size > MAX_VIDEO_UPLOAD_BYTES) {
+			errors.file = "Video file is too large (max 500MB).";
+		}
+		if (!videoUploadTitle.trim()) {
+			errors.title = "Title is required.";
+		}
+		setVideoUploadErrors(errors);
+		if (Object.keys(errors).length) return;
+		setUploadingVideo(true);
+		setUploadMessage("");
+		setUploadError("");
+		setVideoUploadProgress(0);
+		try {
+			const formData = new FormData();
+			formData.append("file", videoUploadFile);
+			formData.append("code", videoUploadCode.trim());
+			formData.append("title", videoUploadTitle.trim());
+			formData.append("category", videoUploadCategory.trim());
+			formData.append("video_type", videoUploadType.trim());
+			formData.append("mood", videoUploadMood.trim());
+			formData.append("description", videoUploadDescription.trim());
+			formData.append("tags", videoUploadTags.trim());
+
+			await new Promise((resolve, reject) => {
+				const xhr = new XMLHttpRequest();
+				xhr.open("POST", "/api/library/video/upload");
+				xhr.upload.onprogress = (event) => {
+					if (event.lengthComputable) {
+						setVideoUploadProgress(Math.round((event.loaded / event.total) * 100));
+					}
+				};
+				xhr.onload = () => {
+					try {
+						const payload = JSON.parse(xhr.responseText || "{}");
+						if (xhr.status >= 200 && xhr.status < 300) {
+							resolve(payload);
+						} else {
+							reject(new Error(payload?.error || "Upload failed."));
+						}
+					} catch (err) {
+						reject(new Error("Upload failed."));
+					}
+				};
+				xhr.onerror = () => reject(new Error("Upload failed."));
+				xhr.send(formData);
+			});
+			setUploadMessage("Video added to library.");
+			setVideoUploadFile(null);
+			setVideoUploadTitle("");
+			setVideoUploadCode("");
+			setVideoUploadCategory("");
+			setVideoUploadType("");
+			setVideoUploadMood("");
+			setVideoUploadDescription("");
+			setVideoUploadTags("");
+			await refreshLibraries();
+		} catch (error) {
+			setUploadError(error.message || "Upload failed.");
+		} finally {
+			setUploadingVideo(false);
+		}
+	};
+
+	const handleAudioLibraryUpload = async () => {
+		const errors = {};
+		if (!audioUploadFile) {
+			errors.file = "Please choose an audio file.";
+		}
+		if (audioUploadFile && audioUploadFile.size > MAX_AUDIO_UPLOAD_BYTES) {
+			errors.file = "Audio file is too large (max 50MB).";
+		}
+		if (!audioUploadTitle.trim()) {
+			errors.title = "Title is required.";
+		}
+		setAudioUploadErrors(errors);
+		if (Object.keys(errors).length) return;
+		setUploadingAudio(true);
+		setUploadMessage("");
+		setUploadError("");
+		setAudioUploadProgress(0);
+		try {
+			const formData = new FormData();
+			formData.append("file", audioUploadFile);
+			formData.append("code", audioUploadCode.trim());
+			formData.append("title", audioUploadTitle.trim());
+			formData.append("description", audioUploadDescription.trim());
+
+			await new Promise((resolve, reject) => {
+				const xhr = new XMLHttpRequest();
+				xhr.open("POST", "/api/library/audio/upload");
+				xhr.upload.onprogress = (event) => {
+					if (event.lengthComputable) {
+						setAudioUploadProgress(Math.round((event.loaded / event.total) * 100));
+					}
+				};
+				xhr.onload = () => {
+					try {
+						const payload = JSON.parse(xhr.responseText || "{}");
+						if (xhr.status >= 200 && xhr.status < 300) {
+							resolve(payload);
+						} else {
+							reject(new Error(payload?.error || "Upload failed."));
+						}
+					} catch (err) {
+						reject(new Error("Upload failed."));
+					}
+				};
+				xhr.onerror = () => reject(new Error("Upload failed."));
+				xhr.send(formData);
+			});
+			setUploadMessage("Audio added to library.");
+			setAudioUploadFile(null);
+			setAudioUploadTitle("");
+			setAudioUploadCode("");
+			setAudioUploadDescription("");
+			await refreshLibraries();
+		} catch (error) {
+			setUploadError(error.message || "Upload failed.");
+		} finally {
+			setUploadingAudio(false);
+		}
 	};
 
 	const onVideoDrop = (acceptedFiles) => {
@@ -330,6 +530,53 @@ export default function CreateVideo() {
 			"image/png": [".png"],
 			"image/jpeg": [".jpg", ".jpeg"],
 			"image/webp": [".webp"],
+		},
+		multiple: false,
+	});
+	const {
+		getRootProps: getLibraryVideoProps,
+		getInputProps: getLibraryVideoInputProps,
+		isDragActive: isLibraryVideoDragActive,
+	} = useDropzone({
+		onDrop: (acceptedFiles) => {
+			const file = acceptedFiles[0] || null;
+			setVideoUploadFile(file);
+			if (file && !videoUploadTitle.trim()) {
+				setVideoUploadTitle(
+					file.name.replace(/\.[^/.]+$/, "").replace(/[_-]+/g, " "),
+				);
+			}
+		},
+		accept: {
+			"video/mp4": [".mp4"],
+			"video/quicktime": [".mov"],
+			"video/x-matroska": [".mkv"],
+			"video/webm": [".webm"],
+		},
+		multiple: false,
+	});
+	const {
+		getRootProps: getLibraryAudioProps,
+		getInputProps: getLibraryAudioInputProps,
+		isDragActive: isLibraryAudioDragActive,
+	} = useDropzone({
+		onDrop: (acceptedFiles) => {
+			const file = acceptedFiles[0] || null;
+			setAudioUploadFile(file);
+			if (file && !audioUploadTitle.trim()) {
+				setAudioUploadTitle(
+					file.name.replace(/\.[^/.]+$/, "").replace(/[_-]+/g, " "),
+				);
+			}
+		},
+		accept: {
+			"audio/mpeg": [".mp3"],
+			"audio/wav": [".wav"],
+			"audio/x-wav": [".wav"],
+			"audio/mp4": [".m4a"],
+			"audio/aac": [".aac"],
+			"audio/flac": [".flac"],
+			"audio/ogg": [".ogg"],
 		},
 		multiple: false,
 	});
@@ -710,6 +957,12 @@ export default function CreateVideo() {
 												code.trim().toLowerCase() ===
 													libraryCode.trim().toLowerCase();
 											const thumbRef = encodeURIComponent(code);
+											const metaParts = [
+												item?.type,
+												item?.mood,
+												formatDuration(item?.duration_sec),
+												item?.orientation,
+											].filter(Boolean);
 											return (
 												<button
 													key={`${item?.code || item?.filename || "video"}-${item?.title || ""}`}
@@ -757,8 +1010,13 @@ export default function CreateVideo() {
 															{item?.title || item?.code || "Untitled"}
 														</p>
 														<p className="text-xs text-slate-500 truncate">
-															{item?.filename || "No filename"}
+															{item?.description || item?.filename || "No description"}
 														</p>
+														{metaParts.length ? (
+															<p className="text-[11px] text-slate-400 mt-1">
+																{metaParts.join(" | ")}
+															</p>
+														) : null}
 													</div>
 												</button>
 											);
@@ -1319,8 +1577,13 @@ export default function CreateVideo() {
 														String(value).toLowerCase() ===
 														String(ref).toLowerCase(),
 												);
-												const thumbRef = encodeURIComponent(ref);
-												return (
+											const thumbRef = encodeURIComponent(ref);
+											const metaParts = [
+												item?.type,
+												item?.mood,
+												formatDuration(item?.duration_sec),
+											].filter(Boolean);
+											return (
 													<button
 														key={`${ref}-context`}
 														type="button"
@@ -1354,6 +1617,11 @@ export default function CreateVideo() {
 															<p className="text-[11px] text-slate-500 truncate">
 																{item?.code || item?.filename || "No code"}
 															</p>
+															{metaParts.length ? (
+																<p className="text-[10px] text-slate-400 mt-1">
+																	{metaParts.join(" | ")}
+																</p>
+															) : null}
 														</div>
 													</button>
 												);
@@ -1363,6 +1631,259 @@ export default function CreateVideo() {
 								) : null}
 							</div>
 						) : null}
+					</motion.div>
+
+					<motion.div className="rounded-2xl border border-slate-700/70 bg-slate-950/50 p-6 space-y-4">
+						<div className="flex flex-wrap items-center justify-between gap-3">
+							<div>
+								<p className="text-slate-100 font-semibold">Add To Library</p>
+								<p className="text-xs text-slate-500">
+									Upload new background clips and audio directly from the UI.
+								</p>
+							</div>
+							<div className="flex items-center gap-2">
+								<button
+									type="button"
+									onClick={() => setShowUploadSection((prev) => !prev)}
+									className="rounded-xl border border-slate-700 bg-slate-900/60 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:border-purple-400/70"
+								>
+									{showUploadSection ? "Hide Upload" : "Open Upload"}
+								</button>
+								<button
+									type="button"
+									onClick={() => setShowUploadAdvanced((prev) => !prev)}
+									disabled={!showUploadSection}
+									className="rounded-xl border border-slate-700 bg-slate-900/60 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:border-purple-400/70 disabled:opacity-50 disabled:cursor-not-allowed"
+								>
+									{showUploadAdvanced ? "Hide Details" : "More Details"}
+								</button>
+							</div>
+						</div>
+
+						{uploadMessage ? (
+							<p className="text-xs text-emerald-300">{uploadMessage}</p>
+						) : null}
+						{uploadError ? (
+							<p className="text-xs text-rose-300">{uploadError}</p>
+						) : null}
+
+						{showUploadSection ? (
+							<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+							<div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 space-y-3">
+								<p className="text-sm font-semibold text-slate-200">
+									Upload Video Clip
+								</p>
+								<div
+									{...getLibraryVideoProps()}
+									className={`rounded-xl border-2 border-dashed px-4 py-3 text-xs text-slate-300 cursor-pointer transition ${
+										isLibraryVideoDragActive
+											? "border-purple-400 bg-purple-500/10"
+											: "border-slate-700 bg-slate-900/70 hover:border-purple-400/70"
+									}`}
+								>
+									<input {...getLibraryVideoInputProps()} />
+									<div className="flex items-center justify-between gap-2">
+										<span className="truncate">
+											{videoUploadFile
+												? videoUploadFile.name
+												: "Drag and drop video here, or click to browse"}
+										</span>
+										<span className="text-[10px] text-slate-500">
+											MP4/MOV/MKV/WEBM
+										</span>
+									</div>
+									{videoUploadPreviewUrl ? (
+										<video
+											src={videoUploadPreviewUrl}
+											className="mt-3 w-full h-32 rounded-lg object-cover border border-slate-800"
+											muted
+											playsInline
+										/>
+									) : null}
+								</div>
+								{videoUploadErrors.file ? (
+									<p className="text-xs text-rose-300">{videoUploadErrors.file}</p>
+								) : null}
+								<div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+									<input
+										type="text"
+										placeholder="Title"
+										value={videoUploadTitle}
+										onChange={(e) => setVideoUploadTitle(e.target.value)}
+										className={`rounded-xl border px-3 py-2 text-xs text-slate-100 placeholder:text-slate-500 ${
+											videoUploadErrors.title
+												? "border-rose-400 bg-rose-500/10"
+												: "border-slate-700 bg-slate-900/70"
+										}`}
+									/>
+									<input
+										type="text"
+										placeholder="Category"
+										value={videoUploadCategory}
+										onChange={(e) => setVideoUploadCategory(e.target.value)}
+										className="rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2 text-xs text-slate-100 placeholder:text-slate-500"
+									/>
+								</div>
+								{videoUploadErrors.title ? (
+									<p className="text-xs text-rose-300">{videoUploadErrors.title}</p>
+								) : null}
+								{uploadingVideo ? (
+									<div className="space-y-2">
+										<div className="flex justify-between text-[11px] text-slate-400">
+											<span>Uploading</span>
+											<span>{videoUploadProgress}%</span>
+										</div>
+										<div className="h-2 w-full rounded-full bg-slate-800">
+											<div
+												className="h-2 rounded-full bg-purple-500 transition-all"
+												style={{ width: `${videoUploadProgress}%` }}
+											/>
+										</div>
+									</div>
+								) : null}
+								{showUploadAdvanced ? (
+									<div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+										<input
+											type="text"
+											placeholder="Code (optional)"
+											value={videoUploadCode}
+											onChange={(e) => setVideoUploadCode(e.target.value)}
+											className="rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2 text-xs text-slate-100 placeholder:text-slate-500"
+										/>
+										<input
+											type="text"
+											placeholder="Type (cinematic / b-roll)"
+											value={videoUploadType}
+											onChange={(e) => setVideoUploadType(e.target.value)}
+											className="rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2 text-xs text-slate-100 placeholder:text-slate-500"
+										/>
+										<input
+											type="text"
+											placeholder="Mood (motivational / calm)"
+											value={videoUploadMood}
+											onChange={(e) => setVideoUploadMood(e.target.value)}
+											className="rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2 text-xs text-slate-100 placeholder:text-slate-500"
+										/>
+										<input
+											type="text"
+											placeholder="Tags (comma separated)"
+											value={videoUploadTags}
+											onChange={(e) => setVideoUploadTags(e.target.value)}
+											className="rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2 text-xs text-slate-100 placeholder:text-slate-500"
+										/>
+										<textarea
+											rows={3}
+											placeholder="Description"
+											value={videoUploadDescription}
+											onChange={(e) => setVideoUploadDescription(e.target.value)}
+											className="sm:col-span-2 w-full rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2 text-xs text-slate-100 placeholder:text-slate-500"
+										/>
+									</div>
+								) : null}
+								<button
+									type="button"
+									onClick={handleVideoLibraryUpload}
+									disabled={uploadingVideo}
+									className="w-full rounded-xl border border-purple-400/60 bg-purple-500/20 px-3 py-2 text-xs font-semibold text-purple-100 hover:border-purple-300 disabled:cursor-not-allowed disabled:opacity-60"
+								>
+									{uploadingVideo ? "Uploading..." : "Add Video To Library"}
+								</button>
+							</div>
+
+							<div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 space-y-3">
+								<p className="text-sm font-semibold text-slate-200">
+									Upload Audio Track
+								</p>
+								<div
+									{...getLibraryAudioProps()}
+									className={`rounded-xl border-2 border-dashed px-4 py-3 text-xs text-slate-300 cursor-pointer transition ${
+										isLibraryAudioDragActive
+											? "border-emerald-400 bg-emerald-500/10"
+											: "border-slate-700 bg-slate-900/70 hover:border-emerald-400/70"
+									}`}
+								>
+									<input {...getLibraryAudioInputProps()} />
+									<div className="flex items-center justify-between gap-2">
+										<span className="truncate">
+											{audioUploadFile
+												? audioUploadFile.name
+												: "Drag and drop audio here, or click to browse"}
+										</span>
+										<span className="text-[10px] text-slate-500">
+											MP3/WAV/M4A/AAC
+										</span>
+									</div>
+									{audioUploadPreviewUrl ? (
+										<audio className="mt-3 w-full" controls src={audioUploadPreviewUrl} />
+									) : null}
+								</div>
+								{audioUploadErrors.file ? (
+									<p className="text-xs text-rose-300">{audioUploadErrors.file}</p>
+								) : null}
+								<div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+									<input
+										type="text"
+										placeholder="Title"
+										value={audioUploadTitle}
+										onChange={(e) => setAudioUploadTitle(e.target.value)}
+										className={`rounded-xl border px-3 py-2 text-xs text-slate-100 placeholder:text-slate-500 ${
+											audioUploadErrors.title
+												? "border-rose-400 bg-rose-500/10"
+												: "border-slate-700 bg-slate-900/70"
+										}`}
+									/>
+									{showUploadAdvanced ? (
+										<input
+											type="text"
+											placeholder="Code (optional)"
+											value={audioUploadCode}
+											onChange={(e) => setAudioUploadCode(e.target.value)}
+											className="rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2 text-xs text-slate-100 placeholder:text-slate-500"
+										/>
+									) : null}
+								</div>
+								{audioUploadErrors.title ? (
+									<p className="text-xs text-rose-300">{audioUploadErrors.title}</p>
+								) : null}
+								{uploadingAudio ? (
+									<div className="space-y-2">
+										<div className="flex justify-between text-[11px] text-slate-400">
+											<span>Uploading</span>
+											<span>{audioUploadProgress}%</span>
+										</div>
+										<div className="h-2 w-full rounded-full bg-slate-800">
+											<div
+												className="h-2 rounded-full bg-emerald-500 transition-all"
+												style={{ width: `${audioUploadProgress}%` }}
+											/>
+										</div>
+									</div>
+								) : null}
+								{showUploadAdvanced ? (
+									<textarea
+										rows={3}
+										placeholder="Description"
+										value={audioUploadDescription}
+										onChange={(e) => setAudioUploadDescription(e.target.value)}
+										className="w-full rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2 text-xs text-slate-100 placeholder:text-slate-500"
+									/>
+								) : null}
+								<button
+									type="button"
+									onClick={handleAudioLibraryUpload}
+									disabled={uploadingAudio}
+									className="w-full rounded-xl border border-emerald-400/60 bg-emerald-500/20 px-3 py-2 text-xs font-semibold text-emerald-100 hover:border-emerald-300 disabled:cursor-not-allowed disabled:opacity-60"
+								>
+									{uploadingAudio ? "Uploading..." : "Add Audio To Library"}
+								</button>
+							</div>
+						</div>
+						) : (
+							<div className="rounded-xl border border-dashed border-slate-800 bg-slate-950/60 px-4 py-5 text-xs text-slate-500">
+								Uploads are hidden to keep the form clean. Click “Open Upload”
+								when you want to add new library assets.
+							</div>
+						)}
 					</motion.div>
 
 					<motion.div className="space-y-3">
