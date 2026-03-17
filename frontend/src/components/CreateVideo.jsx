@@ -153,6 +153,14 @@ export default function CreateVideo() {
 	const [textFile, setTextFile] = useState(null);
 	const [libraryCode, setLibraryCode] = useState("");
 	const [audioLibraryRef, setAudioLibraryRef] = useState("");
+	const [videoLibrary, setVideoLibrary] = useState([]);
+	const [audioLibrary, setAudioLibrary] = useState([]);
+	const [videoLibraryFilter, setVideoLibraryFilter] = useState("");
+	const [audioLibraryFilter, setAudioLibraryFilter] = useState("");
+	const [libraryLoading, setLibraryLoading] = useState(false);
+	const [videoCategory, setVideoCategory] = useState("all");
+	const [showVideoFilters, setShowVideoFilters] = useState(false);
+	const [showAudioFilters, setShowAudioFilters] = useState(false);
 	const [bgmFile, setBgmFile] = useState(null);
 	const [bgmVolume, setBgmVolume] = useState(18);
 	const [bgmDucking, setBgmDucking] = useState(true);
@@ -206,6 +214,35 @@ export default function CreateVideo() {
 			}
 		};
 		loadCategories();
+		return () => {
+			isMounted = false;
+		};
+	}, []);
+
+	useEffect(() => {
+		let isMounted = true;
+		const loadLibraries = async () => {
+			setLibraryLoading(true);
+			try {
+				const [videoRes, audioRes] = await Promise.all([
+					fetch("/api/library"),
+					fetch("/api/audio-library"),
+				]);
+				const videoData = await videoRes.json();
+				const audioData = await audioRes.json();
+				if (!isMounted) return;
+				setVideoLibrary(Array.isArray(videoData?.videos) ? videoData.videos : []);
+				setAudioLibrary(Array.isArray(audioData?.audio) ? audioData.audio : []);
+			} catch {
+				if (isMounted) {
+					setVideoLibrary([]);
+					setAudioLibrary([]);
+				}
+			} finally {
+				if (isMounted) setLibraryLoading(false);
+			}
+		};
+		loadLibraries();
 		return () => {
 			isMounted = false;
 		};
@@ -390,6 +427,57 @@ export default function CreateVideo() {
 	};
 
 	const endLogoDisabled = !endLogoFile;
+	const normalizedVideoFilter = videoLibraryFilter.trim().toLowerCase();
+	const normalizedAudioFilter = audioLibraryFilter.trim().toLowerCase();
+	const videoCategoryOptions = [
+		"all",
+		...Array.from(
+			new Set(
+				videoLibrary
+					.map((item) => {
+						const filename = String(item?.filename || "");
+						if (!filename.includes("/")) return "uncategorized";
+						const category = filename.split("/")[0]?.trim();
+						return category || "uncategorized";
+					})
+					.filter(Boolean),
+			),
+		).sort((a, b) => a.localeCompare(b)),
+	];
+	const activeVideoCategory = videoCategoryOptions.includes(videoCategory)
+		? videoCategory
+		: "all";
+	const filteredVideoLibrary = videoLibrary.filter((item) => {
+		const filename = String(item?.filename || "");
+		const category = filename.includes("/")
+			? filename.split("/")[0]?.trim() || "uncategorized"
+			: "uncategorized";
+		if (activeVideoCategory !== "all" && category !== activeVideoCategory) {
+			return false;
+		}
+		if (!normalizedVideoFilter) return true;
+		const haystack = [
+			item?.code,
+			item?.title,
+			item?.filename,
+		]
+			.filter(Boolean)
+			.join(" ")
+			.toLowerCase();
+		return haystack.includes(normalizedVideoFilter);
+	});
+	const filteredAudioLibrary = audioLibrary.filter((item) => {
+		if (!normalizedAudioFilter) return true;
+		const haystack = [
+			item?.code,
+			item?.title,
+			item?.filename,
+		]
+			.filter(Boolean)
+			.join(" ")
+			.toLowerCase();
+		return haystack.includes(normalizedAudioFilter);
+	});
 
 	return (
 		<div className="w-full bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 rounded-2xl p-5 md:p-6">
@@ -511,6 +599,257 @@ export default function CreateVideo() {
 							placeholder="Use this instead of uploading BGM (code/title/filename)"
 							className="w-full rounded-xl border border-slate-700 bg-slate-800/60 px-4 py-3 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
 						/>
+					</motion.div>
+
+					<motion.div className="space-y-4">
+						<div className="rounded-2xl border border-slate-700/70 bg-slate-950/50 p-6">
+							<div className="flex flex-wrap items-center justify-between gap-4">
+								<div className="flex items-center gap-3">
+									<div className="rounded-xl bg-purple-500/15 p-2">
+										<Video className="w-4 h-4 text-purple-300" />
+									</div>
+									<div>
+										<p className="text-slate-100 font-semibold">Video Library</p>
+										<p className="text-xs text-slate-500">
+											{libraryLoading
+												? "Loading library..."
+												: `${videoLibrary.length} clips available`}
+										</p>
+									</div>
+								</div>
+								<div className="flex flex-wrap items-center gap-2">
+									<input
+										type="text"
+										value={videoLibraryFilter}
+										onChange={(e) => setVideoLibraryFilter(e.target.value)}
+										placeholder="Search video library"
+										className="w-60 max-w-full rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2 text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500/40"
+									/>
+									<button
+										type="button"
+										onClick={() => setShowVideoFilters((prev) => !prev)}
+										className="rounded-xl border border-slate-700 bg-slate-900/60 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:border-purple-400/70"
+									>
+										{showVideoFilters ? "Hide Filters" : "Filters"}
+									</button>
+									<button
+										type="button"
+										onClick={() => setLibraryCode("")}
+										disabled={!libraryCode}
+										className="rounded-xl border border-slate-700 bg-slate-900/60 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:border-purple-400/70 disabled:cursor-not-allowed disabled:opacity-50"
+									>
+										Clear
+									</button>
+								</div>
+							</div>
+
+							{showVideoFilters ? (
+								<div className="mt-4 flex gap-2 overflow-x-auto pb-1">
+									{videoCategoryOptions.map((category) => (
+										<button
+											key={category}
+											type="button"
+											onClick={() => setVideoCategory(category)}
+											className={`whitespace-nowrap rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-wide transition ${
+												activeVideoCategory === category
+													? "border-purple-400 bg-purple-500/20 text-purple-100"
+													: "border-slate-700 bg-slate-900/60 text-slate-400 hover:border-purple-500/70"
+											}`}
+										>
+											{category}
+										</button>
+									))}
+								</div>
+							) : null}
+
+							<div className="mt-4 max-h-64 overflow-y-auto pr-1">
+								{filteredVideoLibrary.length ? (
+									<div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+										{filteredVideoLibrary.map((item) => {
+											const code =
+												item?.code || item?.title || item?.filename || "";
+											const isSelected =
+												Boolean(code) &&
+												code.trim().toLowerCase() ===
+													libraryCode.trim().toLowerCase();
+											const thumbRef = encodeURIComponent(code);
+											return (
+												<button
+													key={`${item?.code || item?.filename || "video"}-${item?.title || ""}`}
+													type="button"
+													onClick={() => {
+														if (!code) return;
+														setLibraryCode(code);
+														setVideoFile(null);
+													}}
+													className={`group relative rounded-2xl border text-left transition ${
+														isSelected
+															? "border-purple-400/90 bg-purple-500/10"
+															: "border-slate-800 bg-slate-950/40 hover:border-purple-500/60"
+													}`}
+												>
+													<div className="relative h-28 overflow-hidden rounded-t-2xl bg-slate-900">
+														<img
+															src={`/api/library/thumbnail?code=${thumbRef}`}
+															alt={item?.title || item?.code || "Video"}
+															className="absolute inset-0 h-full w-full object-cover"
+															onError={(e) => {
+																e.currentTarget.style.opacity = "0";
+															}}
+														/>
+														<div className="absolute inset-0 bg-gradient-to-t from-slate-950/90 via-slate-950/10 to-transparent" />
+														<div className="absolute bottom-2 left-2 flex items-center gap-2 rounded-full bg-slate-950/70 px-2 py-1 text-[10px] text-slate-200">
+															<Video className="h-3 w-3 text-purple-300" />
+															<span>{item?.code || "clip"}</span>
+														</div>
+														{isSelected ? (
+															<span className="absolute top-2 right-2 rounded-full bg-purple-500/80 px-2 py-0.5 text-[10px] font-semibold text-white">
+																Selected
+															</span>
+														) : null}
+													</div>
+													<div className="px-3 py-2">
+														<p className="text-sm font-semibold text-slate-100 truncate">
+															{item?.title || item?.code || "Untitled"}
+														</p>
+														<p className="text-xs text-slate-500 truncate">
+															{item?.filename || "No filename"}
+														</p>
+													</div>
+												</button>
+											);
+										})}
+									</div>
+								) : (
+									<div className="text-xs text-slate-500 border border-dashed border-slate-700 rounded-xl px-3 py-5 text-center">
+										No library videos match this filter.
+									</div>
+								)}
+							</div>
+							<div className="mt-3 text-xs text-slate-500">
+								{libraryCode
+									? `Selected: ${libraryCode}`
+									: "Pick a library clip or upload your own."}
+							</div>
+						</div>
+
+						<div className="rounded-2xl border border-slate-700/70 bg-slate-950/50 p-6">
+							<div className="flex flex-wrap items-center justify-between gap-4">
+								<div className="flex items-center gap-3">
+									<div className="rounded-xl bg-emerald-500/15 p-2">
+										<Mic className="w-4 h-4 text-emerald-300" />
+									</div>
+									<div>
+										<p className="text-slate-100 font-semibold">Audio Library</p>
+										<p className="text-xs text-slate-500">
+											{libraryLoading
+												? "Loading library..."
+												: `${audioLibrary.length} tracks available`}
+										</p>
+									</div>
+								</div>
+								<div className="flex flex-wrap items-center gap-2">
+									<input
+										type="text"
+										value={audioLibraryFilter}
+										onChange={(e) => setAudioLibraryFilter(e.target.value)}
+										placeholder="Search audio library"
+										className="w-60 max-w-full rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2 text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+									/>
+									<button
+										type="button"
+										onClick={() => setShowAudioFilters((prev) => !prev)}
+										className="rounded-xl border border-slate-700 bg-slate-900/60 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:border-emerald-400/70"
+									>
+										{showAudioFilters ? "Hide Filters" : "Filters"}
+									</button>
+									<button
+										type="button"
+										onClick={() => setAudioLibraryRef("")}
+										disabled={!audioLibraryRef}
+										className="rounded-xl border border-slate-700 bg-slate-900/60 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:border-emerald-400/70 disabled:cursor-not-allowed disabled:opacity-50"
+									>
+										Clear
+									</button>
+								</div>
+							</div>
+
+							{showAudioFilters ? (
+								<div className="mt-4 text-xs text-slate-500">
+									Filters are not needed for audio yet. Search is enough.
+								</div>
+							) : null}
+
+							<div className="mt-4 max-h-56 overflow-y-auto pr-1">
+								{filteredAudioLibrary.length ? (
+									<div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+										{filteredAudioLibrary.map((item) => {
+											const code =
+												item?.code || item?.title || item?.filename || "";
+											const isSelected =
+												Boolean(code) &&
+												code.trim().toLowerCase() ===
+													audioLibraryRef.trim().toLowerCase();
+											const thumbRef = encodeURIComponent(code);
+											return (
+												<button
+													key={`${item?.code || item?.filename || "audio"}-${item?.title || ""}`}
+													type="button"
+													onClick={() => {
+														if (!code) return;
+														setAudioLibraryRef(code);
+														setBgmFile(null);
+													}}
+													className={`group relative rounded-2xl border text-left transition ${
+														isSelected
+															? "border-emerald-400/80 bg-emerald-500/10"
+															: "border-slate-800 bg-slate-950/40 hover:border-emerald-500/60"
+													}`}
+												>
+													<div className="relative h-20 overflow-hidden rounded-t-2xl bg-slate-900">
+														<img
+															src={`/api/audio-library/thumbnail?ref=${thumbRef}`}
+															alt={item?.title || item?.code || "Audio"}
+															className="absolute inset-0 h-full w-full object-cover opacity-90"
+															onError={(e) => {
+																e.currentTarget.style.opacity = "0";
+															}}
+														/>
+														<div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-slate-950/10 to-transparent" />
+														<div className="absolute bottom-2 left-2 flex items-center gap-2 rounded-full bg-slate-950/70 px-2 py-1 text-[10px] text-slate-200">
+															<Mic className="h-3 w-3 text-emerald-300" />
+															<span>{item?.code || "track"}</span>
+														</div>
+														{isSelected ? (
+															<span className="absolute top-2 right-2 rounded-full bg-emerald-500/80 px-2 py-0.5 text-[10px] font-semibold text-white">
+																Selected
+															</span>
+														) : null}
+													</div>
+													<div className="px-3 py-2">
+														<p className="text-sm font-semibold text-slate-100 truncate">
+															{item?.title || item?.code || "Untitled"}
+														</p>
+														<p className="text-xs text-slate-500 truncate">
+															{item?.filename || "No filename"}
+														</p>
+													</div>
+												</button>
+											);
+										})}
+									</div>
+								) : (
+									<div className="text-xs text-slate-500 border border-dashed border-slate-700 rounded-xl px-3 py-5 text-center">
+										No library audio matches this filter.
+									</div>
+								)}
+							</div>
+							<div className="mt-3 text-xs text-slate-500">
+								{audioLibraryRef
+									? `Selected: ${audioLibraryRef}`
+									: "Pick a library track or upload your own."}
+							</div>
+						</div>
 					</motion.div>
 
 					{/* BGM Controls */}
