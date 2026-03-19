@@ -41,6 +41,7 @@ data/video_library/sample_loop.mp4
 data/video_library/*
 !data/video_library/README.md
 !data/video_library/catalog.json
+!data/video_library/video_index.json
 !data/video_library/.gitkeep
 data/audio_library/*
 !data/audio_library/README.md
