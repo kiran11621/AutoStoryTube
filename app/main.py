@@ -52,6 +52,7 @@ VOICES_DIR = DATA_DIR / "voices"
 PIPER_VOICES_DIR = VOICES_DIR / "piper"
 TOKEN_PATH = CREDENTIALS_DIR / "token.json"
 CLIENT_SECRET_PATH = CREDENTIALS_DIR / "client_secret.json"
+GEMINI_KEY_PATH = CREDENTIALS_DIR / "gemini_key.txt"
 
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -71,6 +72,17 @@ GEMINI_ENDPOINT = os.getenv(
     "GEMINI_ENDPOINT",
     f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent",
 ).strip()
+
+
+def _load_gemini_api_key() -> str:
+    if GEMINI_KEY_PATH.exists():
+        try:
+            key = GEMINI_KEY_PATH.read_text(encoding="utf-8").strip()
+            if key:
+                return key
+        except OSError:
+            pass
+    return GEMINI_API_KEY
 VOICE_STYLE_PRESETS = {
     "professional": {"rate_adjust": -5},
     "casual": {"rate_adjust": 5},
@@ -746,7 +758,24 @@ async def render_story_video(request: Request) -> JSONResponse:
     if not tags:
         tags = _build_local_tags(" ".join([title, story]), "")
 
-    category_hint = _infer_category_from_prompt(" ".join([title] + tags))
+    settings = payload.get("settings") or {}
+    if not isinstance(settings, dict):
+        settings = {}
+
+    def _pick_setting(key: str, default: object = None) -> object:
+        if key in settings and settings.get(key) is not None:
+            return settings.get(key)
+        if key in payload and payload.get(key) is not None:
+            return payload.get(key)
+        return default
+
+    category_hint = str(
+        _pick_setting(
+            "category_hint",
+            _infer_category_from_prompt(" ".join([title] + tags)),
+        )
+        or ""
+    ).strip()
     response_payload = {
         "video": {"status": "skipped", "outputUrl": None, "error": None},
         "upload": {"status": "skipped", "youtubeUrl": None},
@@ -758,6 +787,7 @@ async def render_story_video(request: Request) -> JSONResponse:
             description=description,
             tags=tags,
             category_hint=category_hint,
+            settings=settings,
         )
         response_payload["video"] = {
             "status": "ready",
@@ -1297,9 +1327,90 @@ def _enhance_prompt(prompt: str, language: str, tone: str, length: str) -> str:
     )
 
 
+def _estimate_target_words(length: str) -> int:
+    raw = str(length or "").strip().lower()
+    if not raw:
+        return 220
+    number_match = re.search(r"(\d+(\.\d+)?)", raw)
+    value = float(number_match.group(1)) if number_match else 0.0
+    if "sec" in raw:
+        seconds = value if value > 0 else 60.0
+        return max(80, int(round((seconds / 60.0) * 150)))
+    if "min" in raw:
+        minutes = value if value > 0 else 2.0
+        return max(120, int(round(minutes * 150)))
+    if value > 0:
+        return max(120, int(round(value * 150)))
+    return 220
+
+
+def _should_extend_story(story: str, target_words: int) -> bool:
+    words = [w for w in story.split() if w.strip()]
+    if len(words) < max(120, int(target_words * 0.6)):
+        return True
+    if story and not re.search(r"[.!?](['\"])?\s*$", story):
+        return True
+    return False
+
+
+def _gemini_continue_story(story: str, language: str, tone: str, length: str) -> str:
+    api_key = _load_gemini_api_key()
+    if not api_key or not GEMINI_ENDPOINT:
+        return ""
+    system_prompt = (
+        "Continue the story in a single flowing narrative.\n"
+        "Return ONLY the continuation text, no JSON, no markdown.\n"
+        "Keep the same language and tone. Do not repeat the opening."
+    )
+    user_prompt = (
+        f"Language: {language}\nTone: {tone}\nTarget length: {length}\n\n"
+        "Story so far:\n"
+        f"{story}\n\n"
+        "Continue from the last sentence:"
+    )
+    payload = {
+        "contents": [{"role": "user", "parts": [{"text": f"{system_prompt}\n\n{user_prompt}"}]}],
+        "generationConfig": {
+            "temperature": 0.6,
+            "topP": 0.9,
+            "maxOutputTokens": 700,
+            "responseMimeType": "text/plain",
+        },
+    }
+    req = urlrequest.Request(
+        GEMINI_ENDPOINT,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "X-goog-api-key": api_key,
+        },
+        method="POST",
+    )
+    try:
+        with urlrequest.urlopen(req, timeout=45) as resp:
+            raw = resp.read().decode("utf-8")
+    except Exception:
+        return ""
+    try:
+        response_payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return ""
+    candidates = response_payload.get("candidates") or []
+    if not candidates:
+        return ""
+    content = candidates[0].get("content") or {}
+    parts = content.get("parts") or []
+    text_parts = []
+    for part in parts:
+        if isinstance(part, dict) and part.get("text"):
+            text_parts.append(str(part.get("text")))
+    return "\n".join(text_parts).strip()
+
+
 def _gemini_generate_story(prompt: str, language: str, tone: str, length: str) -> dict:
-    if not GEMINI_API_KEY:
-        raise RuntimeError("Missing GEMINI_API_KEY environment variable.")
+    api_key = _load_gemini_api_key()
+    if not api_key:
+        raise RuntimeError("Missing Gemini API key. Add it to data/credentials/gemini_key.txt.")
     if not GEMINI_ENDPOINT:
         raise RuntimeError("Missing GEMINI_ENDPOINT configuration.")
 
@@ -1318,7 +1429,7 @@ def _gemini_generate_story(prompt: str, language: str, tone: str, length: str) -
         "generationConfig": {
             "temperature": 0.6,
             "topP": 0.9,
-            "maxOutputTokens": 900,
+            "maxOutputTokens": 1400,
             "responseMimeType": "application/json",
         },
     }
@@ -1329,7 +1440,7 @@ def _gemini_generate_story(prompt: str, language: str, tone: str, length: str) -
         data=json.dumps(payload).encode("utf-8"),
         headers={
             "Content-Type": "application/json",
-            "X-goog-api-key": GEMINI_API_KEY,
+            "X-goog-api-key": api_key,
         },
         method="POST",
     )
@@ -1420,6 +1531,14 @@ def _gemini_generate_story(prompt: str, language: str, tone: str, length: str) -
         description = story[:320].strip()
     if not tags:
         tags = _build_local_tags(" ".join([title, story]), prompt)
+
+    target_words = _estimate_target_words(length)
+    if _should_extend_story(story, target_words):
+        continuation = _gemini_continue_story(story, language, tone, length)
+        if continuation:
+            story = f"{story.rstrip()}\n\n{continuation.lstrip()}"
+            if not description:
+                description = story[:320].strip()
 
     return {
         "title": title,
@@ -5105,10 +5224,42 @@ def _generate_video_from_story(
     description: str,
     tags: list[str],
     category_hint: str,
+    settings: dict | None = None,
 ) -> dict:
-    library_ref = _select_library_reference(category_hint)
-    if not library_ref:
-        raise RuntimeError("No library videos available to generate a video.")
+    settings = settings or {}
+    if not isinstance(settings, dict):
+        settings = {}
+
+    def _setting(key: str, default: object = None) -> object:
+        value = settings.get(key)
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return default
+        return value
+
+    context_refs = _setting("context_library_refs", [])
+    if isinstance(context_refs, str):
+        context_refs = [ref.strip() for ref in context_refs.split(",") if ref.strip()]
+    elif isinstance(context_refs, (list, tuple, set)):
+        context_refs = [str(ref).strip() for ref in context_refs if str(ref).strip()]
+    else:
+        context_refs = []
+
+    audio_library_ref = str(_setting("audio_library_ref", "") or "").strip()
+    if not audio_library_ref:
+        audio_library_ref = str(_setting("audio_library", "") or "").strip()
+
+    preferred_ref = str(
+        _setting("library_ref", _setting("library_code", "")) or ""
+    ).strip()
+    if preferred_ref:
+        match = _library_video_by_reference(preferred_ref)
+        if not match:
+            raise RuntimeError(f"Library video code not found: {preferred_ref}")
+        library_ref = preferred_ref
+    else:
+        library_ref = _select_library_reference(category_hint)
+        if not library_ref:
+            raise RuntimeError("No library videos available to generate a video.")
 
     row = {
         "_library_ref": library_ref,
@@ -5116,11 +5267,26 @@ def _generate_video_from_story(
         "video_name": title,
         "video_description": description,
         "video_tags": ", ".join(tags),
-        "video_strategy": "context_switch",
+        "video_strategy": _setting("video_strategy", "context_switch"),
         "category_hint": category_hint,
-        "context_lock_category": "true",
-        "output_mode": "youtube",
-        "voice_style": "narrator",
+        "context_lock_category": _setting("context_lock_category", "true"),
+        "voice_style": _setting("voice_style", "professional"),
+        "voice_gender": _setting("voice_gender", "male"),
+        "tts_rate": _setting("tts_rate", 175),
+        "subtitle_preset": _setting("subtitle_preset", "classic"),
+        "subtitle_template": _setting("subtitle_template", "beat_sync"),
+        "text_color": _setting("text_color", None),
+        "bg_color": _setting("bg_color", None),
+        "bold": _setting("bold", None),
+        "italic": _setting("italic", None),
+        "alignment": _setting("alignment", None),
+        "output_mode": _setting("output_mode", "youtube"),
+        "context_scene_count": _setting("context_scene_count", 6),
+        "context_library_refs": context_refs,
+        "bgm_volume": _setting("bgm_volume", None),
+        "bgm_ducking": _setting("bgm_ducking", None),
+        "audio_library": audio_library_ref,
+        "audio_library_ref": audio_library_ref,
     }
     if not _load_video_index():
         row["video_strategy"] = "single"
