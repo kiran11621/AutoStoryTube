@@ -1,6 +1,6 @@
 # AutoStoryTube
 
-AutoStoryTube is a **100% local** web app that turns a background video + story text into a narrated video with animated subtitles, then uploads it to YouTube using the official YouTube Data API v3.
+AutoStoryTube is a **100% local** web app that turns a background video + story text into a narrated video with animated subtitles with Scripts and LLM, then uploads it to YouTube using the official YouTube Data API v3.
 
 The YouTube upload flow supports all three post-processing features:
 
